@@ -46,16 +46,16 @@ export const Navbar: React.FC<NavbarProps> = ({
               <img 
                 src="/logo-kz.jpg" 
                 alt="Logo #VOY CON EL KZ" 
-                className="w-12 h-12 rounded-xl object-cover shadow-lg ring-2 ring-[#38b6ff] ring-offset-2 ring-offset-slate-900 transition-transform group-hover:scale-105"
+                className="w-11 h-11 rounded-xl object-cover shadow-md ring-1 ring-[#38b6ff]/60 transition-transform group-hover:scale-105"
               />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-heading font-black tracking-wider text-xl text-white">
-                  CRONOGRAMA <span className="text-[#38b6ff]">#VOYCONELKZ</span>
+                <span className="font-heading font-black tracking-wider text-lg text-white">
+                  AGENDA DE CAMPAÑA
                 </span>
-                <span className="bg-[#38b6ff]/20 text-[#38b6ff] text-xs font-bold px-2 py-0.5 rounded-full border border-[#38b6ff]/30 hidden sm:inline-block">
-                  CAMPAÑA OFICIAL
+                <span className="bg-[#38b6ff]/20 text-[#38b6ff] text-[11px] font-bold px-2 py-0.5 rounded-full border border-[#38b6ff]/30 hidden sm:inline-block">
+                  #VOYCONELKZ
                 </span>
               </div>
               <p className="text-xs text-slate-400 flex items-center gap-1.5 capitalize">

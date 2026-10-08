@@ -55,22 +55,22 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
       <div className="bg-white p-6 sm:p-10 rounded-2xl border border-slate-200 shadow-sm print:border-none print:shadow-none print:p-0 max-w-5xl mx-auto">
         
         {/* Header with Official Logo & Campaign details */}
-        <div className="border-b-2 border-slate-900 pb-5 mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="border-b-2 border-slate-900 pb-4 mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <img
               src="/logo-kz.jpg"
               alt="Logo #VOY CON EL KZ"
-              className="w-16 h-16 sm:w-20 sm:h-20 object-cover rounded-xl border border-slate-200 shadow-xs"
+              className="w-12 h-12 object-cover rounded-lg border border-slate-300 shadow-2xs"
             />
             <div>
-              <span className="text-[11px] font-black tracking-widest text-[#1c4b82] uppercase block">
-                CAMPAÑA POLÍTICA OFICIAL 2026
+              <span className="text-[10px] font-black tracking-widest text-[#1c4b82] uppercase block">
+                DOCUMENTO OFICIAL DE AVANZADA Y SEGURIDAD
               </span>
-              <h1 className="text-xl sm:text-2xl font-black font-heading text-slate-900 leading-tight">
-                #VOY CON EL KZ
+              <h1 className="text-lg sm:text-xl font-black font-heading text-slate-900 leading-tight">
+                Hoja de Ruta Territorial | Campaña 2026
               </h1>
-              <p className="text-xs font-bold text-slate-600">
-                HOJA DE RUTA Y AGENDA DIARIA EN TERRITORIO
+              <p className="text-xs font-semibold text-slate-500">
+                Coordinación Operativa y Desplazamiento
               </p>
             </div>
           </div>

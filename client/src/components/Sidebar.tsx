@@ -71,25 +71,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="w-full lg:w-72 bg-slate-900 border-r border-slate-800 text-slate-300 p-4 flex flex-col justify-between shrink-0">
       <div>
         
-        {/* Campaign Banner Card */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-950 p-3.5 rounded-xl border border-slate-700/60 mb-5 shadow-inner">
-          <div className="flex items-center gap-3">
-            <img 
-              src="/logo-kz.jpg" 
-              alt="#VOY CON EL KZ" 
-              className="w-11 h-11 rounded-lg object-cover ring-2 ring-[#38b6ff]"
-            />
-            <div>
-              <p className="font-heading font-black text-sm text-white tracking-wide">
-                #VOY CON EL KZ
-              </p>
-              <p className="text-[11px] text-[#38b6ff] font-semibold flex items-center gap-1">
-                <Flame className="w-3 h-3 text-[#38b6ff]" />
-                Campaña en Movimiento
-              </p>
-            </div>
-          </div>
+        {/* Section title */}
+        <div className="px-3 mb-3 text-[11px] font-black uppercase tracking-wider text-slate-400 font-heading flex items-center justify-between">
+          <span>Menú de Operaciones</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-[#38b6ff]" />
         </div>
+
 
         {/* Navigation list */}
         <nav className="space-y-1.5">
