@@ -1,0 +1,31 @@
+{
+  "name": "cronograma-campana-kz",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "build:client": "npm run build --prefix client",
+    "start": "node server/index.js"
+  },
+  "keywords": [
+    "politica",
+    "cronograma",
+    "whatsapp",
+    "campana"
+  ],
+  "author": "Campana KZ",
+  "license": "ISC",
+  "description": "Software de Cronograma y Notificaciones WhatsApp para Campaña Política #VOY CON EL KZ",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.6",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "node-cron": "^4.6.0",
+    "sql.js": "^1.14.2"
+  }
+}

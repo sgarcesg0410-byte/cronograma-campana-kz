@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  cronograma-campana-kz:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: campana-kz-app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - JWT_SECRET=campana_kz_secret_key_2026
+    volumes:
+      # Volumen para persistencia de la base de datos SQLite y datos de campaña
+      - ./campana_data:/app/server/data
