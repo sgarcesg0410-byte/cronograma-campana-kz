@@ -13,18 +13,22 @@ if (!fs.existsSync(DB_DIR)) {
 }
 const DB_FILE = process.env.DB_FILE || path.join(DB_DIR, 'campana_kz.sqlite');
 
+const BACKUPS_DIR = path.join(DB_DIR, 'backups');
+if (!fs.existsSync(BACKUPS_DIR)) {
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+}
 
 let sqlDb = null;
 
 // Helper to save DB to disk
-function saveToDisk() {
+export function saveToDisk() {
   if (!sqlDb) return;
   const data = sqlDb.export();
   const buffer = Buffer.from(data);
   fs.writeFileSync(DB_FILE, buffer);
 }
 
-// Wrapper DB interface
+// Wrapper DB interface with transaction support
 export const db = {
   exec(sql) {
     if (!sqlDb) throw new Error('Database not initialized');
@@ -53,7 +57,6 @@ export const db = {
     if (!sqlDb) throw new Error('Database not initialized');
     sqlDb.run(sql, params);
     
-    // Get last insert row id
     const res = sqlDb.exec('SELECT last_insert_rowid() as id, changes() as changes;');
     let lastInsertRowid = 0;
     let changes = 0;
@@ -64,9 +67,66 @@ export const db = {
     
     saveToDisk();
     return { lastInsertRowid, changes };
+  },
+
+  transaction(fn) {
+    if (!sqlDb) throw new Error('Database not initialized');
+    sqlDb.exec('BEGIN TRANSACTION;');
+    try {
+      const result = fn();
+      sqlDb.exec('COMMIT;');
+      saveToDisk();
+      return result;
+    } catch (err) {
+      sqlDb.exec('ROLLBACK;');
+      throw err;
+    }
   }
 };
 
+// Create a verifiable backup of the current database state
+export function createDatabaseBackup(reason = 'manual', userIdentifier = 'system', requestId = '') {
+  if (!sqlDb) throw new Error('Database not initialized');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const sanitizedReason = reason.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `backup_${timestamp}_req_${requestId || 'none'}_${sanitizedReason}.json`;
+  const backupPath = path.join(BACKUPS_DIR, filename);
+
+  const data = {
+    metadata: {
+      timestamp: new Date().toISOString(),
+      reason,
+      user: userIdentifier,
+      requestId,
+      version: '1.0.0'
+    },
+    tables: {
+      users: db.query('SELECT id, name, email, role, zone, phone, active, created_at FROM users'),
+      activities: db.query('SELECT * FROM activities'),
+      contacts: db.query('SELECT * FROM contacts'),
+      audit_logs: db.query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500')
+    }
+  };
+
+  const jsonStr = JSON.stringify(data, null, 2);
+  fs.writeFileSync(backupPath, jsonStr, 'utf-8');
+
+  // Verify file written and size > 0
+  const stats = fs.statSync(backupPath);
+  if (!stats || stats.size === 0) {
+    throw new Error('El archivo de respaldo generado está vacío o no se guardó.');
+  }
+
+  return {
+    filename,
+    filePath: backupPath,
+    sizeBytes: stats.size,
+    activitiesCount: data.tables.activities.length,
+    usersCount: data.tables.users.length
+  };
+}
+
+// Database initialization and idempotent migrations
 export async function initDatabase() {
   const SQL = await initSqlJs();
   
@@ -77,20 +137,24 @@ export async function initDatabase() {
     sqlDb = new SQL.Database();
   }
 
-  // 1. Users table
+  // 1. Users table with closed roles and zone support
   sqlDb.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'coordinador',
+      role TEXT NOT NULL CHECK(role IN ('admin', 'candidato', 'coordinador', 'prensa', 'lider')),
+      zone TEXT DEFAULT 'General',
       phone TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      active INTEGER NOT NULL DEFAULT 1,
+      last_login TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // 2. Activities table
+  // 2. Activities table with is_demo flag and zone support
   sqlDb.exec(`
     CREATE TABLE IF NOT EXISTS activities (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,11 +168,13 @@ export async function initDatabase() {
       location_name TEXT NOT NULL,
       location_address TEXT,
       location_url TEXT,
+      zone TEXT DEFAULT 'General',
       responsible_id INTEGER,
       responsible_name TEXT NOT NULL,
       team_assigned TEXT,
       logistics_needed TEXT,
       notes TEXT,
+      is_demo INTEGER NOT NULL DEFAULT 0,
       created_by INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -123,6 +189,7 @@ export async function initDatabase() {
       role_description TEXT NOT NULL,
       phone TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT 'comitiva',
+      zone TEXT DEFAULT 'General',
       active INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -136,8 +203,11 @@ export async function initDatabase() {
       recipient_phone TEXT NOT NULL,
       recipient_name TEXT,
       channel TEXT NOT NULL,
+      provider TEXT DEFAULT 'assisted',
+      provider_message_id TEXT,
       status TEXT NOT NULL DEFAULT 'sent',
       message_text TEXT NOT NULL,
+      error_message TEXT,
       sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -146,7 +216,7 @@ export async function initDatabase() {
   sqlDb.exec(`
     CREATE TABLE IF NOT EXISTS whatsapp_settings (
       id INTEGER PRIMARY KEY,
-      provider TEXT NOT NULL DEFAULT 'simulation',
+      provider TEXT NOT NULL DEFAULT 'assisted',
       api_url TEXT,
       api_token TEXT,
       account_sid TEXT,
@@ -158,213 +228,155 @@ export async function initDatabase() {
     );
   `);
 
+  // 6. Strict Append-Only Audit Logs table
+  sqlDb.exec(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      details_json TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      request_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Migrations: ensure columns exist if DB was created earlier
+  runMigrations();
+
+  // Seed default data if completely empty
   seedData();
   saveToDisk();
 }
 
+function runMigrations() {
+  // Check if is_demo column exists in activities
+  try {
+    const actSample = db.query('SELECT * FROM activities LIMIT 1');
+    if (actSample.length > 0 && actSample[0].is_demo === undefined) {
+      db.exec('ALTER TABLE activities ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0;');
+      db.exec('ALTER TABLE activities ADD COLUMN zone TEXT DEFAULT "General";');
+    }
+  } catch (e) {
+    // Column might already exist
+  }
+
+  // Check if zone/active/last_login exist in users
+  try {
+    const userSample = db.query('SELECT * FROM users LIMIT 1');
+    if (userSample.length > 0) {
+      if (userSample[0].zone === undefined) {
+        db.exec('ALTER TABLE users ADD COLUMN zone TEXT DEFAULT "General";');
+      }
+      if (userSample[0].active === undefined) {
+        db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1;');
+      }
+      if (userSample[0].last_login === undefined) {
+        db.exec('ALTER TABLE users ADD COLUMN last_login TEXT;');
+      }
+      if (userSample[0].updated_at === undefined) {
+        try {
+          db.exec('ALTER TABLE users ADD COLUMN updated_at TEXT;');
+        } catch (_) {}
+      }
+    }
+  } catch (e) {
+    // Column might already exist
+  }
+}
+
 function seedData() {
-  // Check users count
-  const userRows = db.query('SELECT COUNT(*) as count FROM users');
-  const userCount = userRows[0]?.count || 0;
+  const userCount = db.query('SELECT COUNT(*) as count FROM users')[0]?.count || 0;
 
   if (userCount === 0) {
     const salt = bcrypt.genSaltSync(10);
     const defaultPasswordHash = bcrypt.hashSync('kz2026!', salt);
 
-    db.run(
-      `INSERT INTO users (name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)`,
-      ['Administrador de Campaña', 'admin@voyconelkz.com', defaultPasswordHash, 'admin', '+573001234567']
-    );
-    db.run(
-      `INSERT INTO users (name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)`,
-      ['Candidato KZ', 'candidato@voyconelkz.com', defaultPasswordHash, 'candidato', '+573109876543']
-    );
-    db.run(
-      `INSERT INTO users (name, email, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)`,
-      ['Coordinador de Avanzada', 'avanzada@voyconelkz.com', defaultPasswordHash, 'coordinador', '+573205557788']
-    );
-  }
-
-  // Check contacts count
-  const contactRows = db.query('SELECT COUNT(*) as count FROM contacts');
-  const contactCount = contactRows[0]?.count || 0;
-
-  if (contactCount === 0) {
-    db.run(
-      `INSERT INTO contacts (name, role_description, phone, category) VALUES (?, ?, ?, ?)`,
-      ['Equipo Avanzada y Seguridad', 'Comitiva Principal', '+573009998877', 'comitiva']
-    );
-    db.run(
-      `INSERT INTO contacts (name, role_description, phone, category) VALUES (?, ?, ?, ?)`,
-      ['Coordinación de Prensa y Medios', 'Comunicaciones #VOYCONELKZ', '+573114443322', 'prensa']
-    );
-    db.run(
-      `INSERT INTO contacts (name, role_description, phone, category) VALUES (?, ?, ?, ?)`,
-      ['Líderes Barriales Zona Norte', 'Liderazgo Territorial', '+573157778899', 'lider_barrial']
-    );
-    db.run(
-      `INSERT INTO contacts (name, role_description, phone, category) VALUES (?, ?, ?, ?)`,
-      ['Líderes Sector Comercio y Jóvenes', 'Juventudes KZ', '+573182221100', 'lider_barrial']
-    );
-    db.run(
-      `INSERT INTO contacts (name, role_description, phone, category) VALUES (?, ?, ?, ?)`,
-      ['Logística y Transporte', 'Caravanas y Sonido', '+573005551234', 'logistica']
-    );
-  }
-
-  // Check settings
-  const settingsRows = db.query('SELECT COUNT(*) as count FROM whatsapp_settings');
-  const settingsCount = settingsRows[0]?.count || 0;
-
-  if (settingsCount === 0) {
-    db.run(
-      `INSERT INTO whatsapp_settings (id, provider, auto_reminders_enabled, reminder_minutes_before, daily_summary_time) VALUES (1, 'simulation', 1, 60, '07:00')`
-    );
-  }
-
-  // Check activities
-  const activityRows = db.query('SELECT COUNT(*) as count FROM activities');
-  const activityCount = activityRows[0]?.count || 0;
-
-  if (activityCount === 0) {
-    const today = new Date().toISOString().split('T')[0];
-    
-    const tomorrowDate = new Date();
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-    const tomorrow = tomorrowDate.toISOString().split('T')[0];
-
-    const dayAfterDate = new Date();
-    dayAfterDate.setDate(dayAfterDate.getDate() + 2);
-    const dayAfter = dayAfterDate.toISOString().split('T')[0];
-
-    const insertActivitySql = `
-      INSERT INTO activities (
-        title, description, date, start_time, end_time, category, status,
-        location_name, location_address, location_url, responsible_name, team_assigned,
-        logistics_needed, notes, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    const insertUserSql = `
+      INSERT INTO users (name, email, password_hash, role, zone, phone, active) 
+      VALUES (?, ?, ?, ?, ?, ?, 1)
     `;
 
-    // Today's activities
-    db.run(insertActivitySql, [
+    db.run(insertUserSql, ['Administrador General', 'admin@voyconelkz.com', defaultPasswordHash, 'admin', 'General', '+573001234567']);
+    db.run(insertUserSql, ['Candidato KZ', 'candidato@voyconelkz.com', defaultPasswordHash, 'candidato', 'General', '+573109876543']);
+    db.run(insertUserSql, ['Coordinador de Avanzada', 'avanzada@voyconelkz.com', defaultPasswordHash, 'coordinador', 'Central', '+573205557788']);
+    db.run(insertUserSql, ['Jefe de Comunicaciones', 'prensa@voyconelkz.com', defaultPasswordHash, 'prensa', 'General', '+573114443322']);
+    db.run(insertUserSql, ['Líder Comunal Zona Norte', 'lider.norte@voyconelkz.com', defaultPasswordHash, 'lider', 'Norte', '+573157778899']);
+
+    // Log seed in audit
+    db.run(`
+      INSERT INTO audit_logs (user_id, action, resource_type, resource_id, details_json, ip_address, user_agent, request_id)
+      VALUES (1, 'SYSTEM_INIT', 'users', 'all', '{"message":"Usuarios iniciales creados para producción"}', '127.0.0.1', 'System/Init', 'init-seed')
+    `);
+  }
+
+  const contactCount = db.query('SELECT COUNT(*) as count FROM contacts')[0]?.count || 0;
+  if (contactCount === 0) {
+    db.run(`INSERT INTO contacts (name, role_description, phone, category, zone) VALUES (?, ?, ?, ?, ?)`,
+      ['Equipo Avanzada y Seguridad', 'Comitiva Principal', '+573009998877', 'comitiva', 'General']);
+    db.run(`INSERT INTO contacts (name, role_description, phone, category, zone) VALUES (?, ?, ?, ?, ?)`,
+      ['Coordinación de Prensa y Medios', 'Comunicaciones #VOYCONELKZ', '+573114443322', 'prensa', 'General']);
+    db.run(`INSERT INTO contacts (name, role_description, phone, category, zone) VALUES (?, ?, ?, ?, ?)`,
+      ['Líderes Barriales Zona Norte', 'Liderazgo Territorial', '+573157778899', 'lider_barrial', 'Norte']);
+    db.run(`INSERT INTO contacts (name, role_description, phone, category, zone) VALUES (?, ?, ?, ?, ?)`,
+      ['Logística y Transporte', 'Caravanas y Sonido', '+573005551234', 'logistica', 'General']);
+  }
+
+  const settingsCount = db.query('SELECT COUNT(*) as count FROM whatsapp_settings')[0]?.count || 0;
+  if (settingsCount === 0) {
+    db.run(`INSERT INTO whatsapp_settings (id, provider, auto_reminders_enabled, reminder_minutes_before, daily_summary_time) VALUES (1, 'assisted', 1, 60, '07:00')`);
+  }
+
+  // Ensure demo activities are explicitly marked with is_demo = 1
+  const activityCount = db.query('SELECT COUNT(*) as count FROM activities')[0]?.count || 0;
+  if (activityCount === 0) {
+    const today = new Date().toISOString().split('T')[0];
+
+    const insertDemoActivity = `
+      INSERT INTO activities (
+        title, description, date, start_time, end_time, category, status,
+        location_name, location_address, location_url, zone, responsible_name, team_assigned,
+        logistics_needed, notes, is_demo, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+    `;
+
+    db.run(insertDemoActivity, [
       'Desayuno de Trabajo con Líderes Comunitarios',
       'Presentación del plan de infraestructura y diálogo con presidentes de Juntas de Acción Comunal.',
-      today,
-      '07:30',
-      '09:30',
-      'reunion',
-      'cumplido',
-      'Salón Comunal Barrio Kennedy',
-      'Carrera 15 # 45-20',
-      'https://maps.google.com/?q=Kennedy+Central',
-      'Carlos Mendoza (Avanzada)',
-      'Equipo Territorial 1 & Juventudes KZ',
-      'Microfonía inalámbrica, 60 refrigerios, pendones #VOYCONELKZ',
-      'Confirmados 48 presidentes de junta.'
+      today, '07:30', '09:30', 'reunion', 'cumplido',
+      'Salón Comunal Barrio Kennedy', 'Carrera 15 # 45-20', 'https://maps.google.com/?q=Kennedy+Central',
+      'Central', 'Carlos Mendoza (Avanzada)', 'Equipo Territorial 1 & Juventudes KZ',
+      'Microfonía inalámbrica, 60 refrigerios, pendones #VOYCONELKZ', 'Confirmados 48 presidentes de junta.'
     ]);
 
-    db.run(insertActivitySql, [
+    db.run(insertDemoActivity, [
       'Rueda de Prensa y Medios Locales',
       'Lanzamiento oficial de las propuestas de seguridad ciudadana y empleo juvenil.',
-      today,
-      '10:30',
-      '12:00',
-      'prensa',
-      'en_curso',
-      'Hotel Plaza Central - Sala Diamante',
-      'Calle 10 # 5-30',
-      'https://maps.google.com/?q=Hotel+Plaza+Central',
-      'Laura Gómez (Prensa)',
-      'Equipo de Comunicaciones y Redes',
-      'Atril con logo #VOY CON EL KZ, sistema de audio y kits de prensa',
-      'Asisten 14 periodistas de radio, televisión y medios digitales.'
+      today, '10:30', '12:00', 'prensa', 'en_curso',
+      'Hotel Plaza Central - Sala Diamante', 'Calle 10 # 5-30', 'https://maps.google.com/?q=Hotel+Plaza+Central',
+      'General', 'Laura Gómez (Prensa)', 'Equipo de Comunicaciones y Redes',
+      'Atril con logo #VOY CON EL KZ, sistema de audio y kits de prensa', 'Asisten 14 periodistas.'
     ]);
 
-    db.run(insertActivitySql, [
+    db.run(insertDemoActivity, [
       'Gran Caminata y Visita Puerta a Puerta',
       'Recorrido calle a calle saludando comerciantes y familias, entrega de volantes con propuestas.',
-      today,
-      '15:00',
-      '18:00',
-      'recorrido',
-      'programado',
-      'Sector Comercial El Progreso',
-      'Avenida Central con Calle 8',
-      'https://maps.google.com/?q=Avenida+Central',
-      'Andrés Pardo (Coordinador Territorial)',
-      'Avanzada, Voluntariado Juvenil (35 personas)',
-      'Megáfonos, 1500 volantes, 80 gorras y camisetas #VOY CON EL KZ, hidratación',
-      'Punto de encuentro: Parque Central frente a la iglesia.'
+      today, '15:00', '18:00', 'recorrido', 'programado',
+      'Sector Comercial El Progreso', 'Avenida Central con Calle 8', 'https://maps.google.com/?q=Avenida+Central',
+      'Norte', 'Andrés Pardo (Coordinador Territorial)', 'Avanzada, Voluntariado Juvenil',
+      'Megáfonos, 1500 volantes, 80 gorras, hidratación', 'Punto de encuentro: Parque Central.'
     ]);
 
-    db.run(insertActivitySql, [
+    db.run(insertDemoActivity, [
       'Mitin Central y Concentración Ciudadana',
       'Discurso principal del candidato KZ, presentación de compromisos comunales con la comunidad.',
-      today,
-      '19:00',
-      '21:30',
-      'mitin',
-      'programado',
-      'Plaza de Banderas Los Libertadores',
-      'Plaza Principal',
-      'https://maps.google.com/?q=Plaza+Principal',
-      'Comité Político Central',
-      'Toda la comitiva de campaña & Seguridad',
-      'Tarima con luces, sonido profesional 5000W, 400 sillas, pantalla LED con logo KZ, banderas',
-      'Estimado de asistencia: 800 a 1200 simpatizantes.'
-    ]);
-
-    // Tomorrow
-    db.run(insertActivitySql, [
-      'Entrevista en Emisora Radial La Voz del Pueblo',
-      'Entrevista en vivo en el noticiero matutino sobre propuestas para madres cabeza de hogar.',
-      tomorrow,
-      '08:00',
-      '09:00',
-      'prensa',
-      'programado',
-      'Estudios Radial La Voz del Pueblo',
-      'Carrera 7 # 12-40',
-      'https://maps.google.com/?q=Estudios+Radial',
-      'Laura Gómez (Prensa)',
-      'Comunicaciones',
-      'Grabación de clips para TikTok e Instagram en vivo',
-      'Llegar 20 minutos antes para prueba de micrófonos.'
-    ]);
-
-    db.run(insertActivitySql, [
-      'Gran Caravana de la Victoria #VOY CON EL KZ',
-      'Caravana vehicular con motos y carros decorados recorriendo los principales sectores del municipio.',
-      tomorrow,
-      '16:30',
-      '19:30',
-      'caravana',
-      'programado',
-      'Punto de Salida: Glorieta Norte',
-      'Glorieta Norte Km 2',
-      'https://maps.google.com/?q=Glorieta+Norte',
-      'Equipo Logístico y Transportadores',
-      'Comitiva de avanzada & 120 vehículos inscritos',
-      'Camión tarima con sonido móvil, banderas gigantes #VOY CON EL KZ, pitos y stickers vehiculares',
-      'Coordinar con tránsito municipal la escolta vial.'
-    ]);
-
-    // Day after
-    db.run(insertActivitySql, [
-      'Encuentro con Jóvenes Universitarios',
-      'Foro abierto sobre becas, emprendimiento y tecnología.',
-      dayAfter,
-      '14:00',
-      '16:30',
-      'reunion',
-      'programado',
-      'Auditorio Centro Cultural',
-      'Calle 14 # 9-18',
-      'https://maps.google.com/?q=Centro+Cultural',
-      'Juventudes KZ',
-      'Comité de Juventudes',
-      'Sonido, proyector HDMI, banners fotográficos con el logo KZ',
-      'Se rifarán 10 cupos para talleres de liderazgo.'
+      today, '19:00', '21:30', 'mitin', 'programado',
+      'Plaza de Banderas Los Libertadores', 'Plaza Principal', 'https://maps.google.com/?q=Plaza+Principal',
+      'Central', 'Comité Político Central', 'Toda la comitiva de campaña & Seguridad',
+      'Tarima con luces, sonido 5000W, pantalla LED, banderas', 'Estimado: 800 a 1200 simpatizantes.'
     ]);
   }
 }

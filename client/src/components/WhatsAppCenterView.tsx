@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Contact, NotificationLog, WhatsAppSettings } from '../types';
+import { Activity, Contact, NotificationLog, WhatsAppSettings, TestLiveWhatsAppResponse } from '../types';
 import { api } from '../services/api';
 import { 
   MessageSquare, 
@@ -18,7 +18,9 @@ import {
   Bot,
   Zap,
   Clock,
-  Smartphone
+  Smartphone,
+  ShieldCheck,
+  Activity as PulseIcon
 } from 'lucide-react';
 
 interface WhatsAppCenterViewProps {
@@ -49,6 +51,34 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<string | null>(null);
   const [sendingSingle, setSendingSingle] = useState(false);
+
+  // Live Test Diagnostic States
+  const [testPhone, setTestPhone] = useState<string>('+57');
+  const [testCustomMsg, setTestCustomMsg] = useState<string>('');
+  const [testLoading, setTestLoading] = useState<boolean>(false);
+  const [testResult, setTestResult] = useState<TestLiveWhatsAppResponse | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  const handleRunTestLive = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTestError(null);
+    setTestResult(null);
+    const phoneRegex = /^\+[1-9]\d{7,14}$/;
+    if (!testPhone || !phoneRegex.test(testPhone.trim())) {
+      setTestError('Formato de teléfono inválido. Debe usar formato internacional E.164 (Ej. +573001234567).');
+      return;
+    }
+    setTestLoading(true);
+    try {
+      const res = await api.testLiveWhatsApp(testPhone.trim(), testCustomMsg.trim() || undefined);
+      setTestResult(res);
+      await loadSettingsAndLogs();
+    } catch (err: any) {
+      setTestError(err.message || 'Error al ejecutar prueba de WhatsApp.');
+    } finally {
+      setTestLoading(false);
+    }
+  };
 
   // Load preview whenever direct params change
   useEffect(() => {
@@ -486,6 +516,119 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
             </div>
 
           </div>
+
+          {/* Controlled Live Test Diagnostic Card */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 bg-indigo-50 text-indigo-700 rounded-xl flex items-center justify-center font-bold">
+                  <PulseIcon className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 font-heading">
+                    Diagnóstico y Despacho de Prueba en Tiempo Real
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Verificación de canal oficial con proveedor activo (Meta Cloud, Twilio o Simulador)
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full border border-slate-200">
+                Rate Limit: 5 envíos / 15 min
+              </span>
+            </div>
+
+            {testError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2 font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{testError}</span>
+              </div>
+            )}
+
+            {testResult && (
+              <div className={`p-4 rounded-xl text-xs space-y-1.5 border ${
+                testResult.success
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                <div className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Resultado del Despacho: {testResult.note || 'Completado'}</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
+                  <div>
+                    <span className="text-slate-500 block">Proveedor:</span>
+                    <span className="font-bold uppercase text-slate-800">{testResult.provider}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Estado:</span>
+                    <span className="font-bold text-slate-800">{testResult.status}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Message ID:</span>
+                    <span className="font-bold text-slate-800 truncate block">{testResult.messageId}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Intentos Restantes:</span>
+                    <span className="font-bold text-slate-800">{testResult.remainingAttempts ?? 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleRunTestLive} className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1">
+                    Número de Destino de Prueba (E.164) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="+573001234567"
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 font-mono text-sm focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Escriba su número con indicativo internacional para recibir el mensaje de verificación.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1">
+                    Texto Personalizado (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Mensaje de prueba oficial..."
+                    value={testCustomMsg}
+                    onChange={(e) => setTestCustomMsg(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Si se deja vacío, se enviará la plantilla oficial #VOY CON EL KZ.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={testLoading}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-5 rounded-xl flex items-center gap-2 shadow-sm transition-transform hover:scale-[1.02] disabled:opacity-50"
+                >
+                  {testLoading ? (
+                    <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  <span>Despachar Mensaje de Prueba en Vivo</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
         </div>
       )}
 

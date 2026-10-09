@@ -8,20 +8,24 @@ import {
   Printer, 
   CheckCircle2,
   Clock,
-  Flame
+  Flame,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
-import { DashboardSummary } from '../types';
+import { DashboardSummary, User } from '../types';
 
 interface SidebarProps {
   currentView: string;
   onSelectView: (view: string) => void;
   summary?: DashboardSummary;
+  currentUser?: User | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   currentView,
   onSelectView,
   summary,
+  currentUser,
 }) => {
   const menuItems = [
     {
@@ -65,6 +69,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Formato imprimible con logo',
       icon: Printer,
     },
+    ...(currentUser?.role === 'admin' ? [
+      {
+        id: 'users',
+        label: 'Equipo y Roles RBAC',
+        description: 'Usuarios, accesos y zonas',
+        icon: ShieldCheck,
+        badge: 'Admin',
+        badgeColor: 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+      },
+      {
+        id: 'audit',
+        label: 'Bitácora de Auditoría',
+        description: 'Eventos y trazabilidad',
+        icon: ShieldAlert,
+        badge: 'Log',
+        badgeColor: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+      }
+    ] : []),
   ];
 
   return (

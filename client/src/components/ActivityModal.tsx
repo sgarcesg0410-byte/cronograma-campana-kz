@@ -41,6 +41,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
     location_name: '',
     location_address: '',
     location_url: '',
+    zone: 'General',
     responsible_name: '',
     team_assigned: '',
     logistics_needed: '',
@@ -64,6 +65,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
         location_name: '',
         location_address: '',
         location_url: '',
+        zone: 'General',
         responsible_name: '',
         team_assigned: '',
         logistics_needed: '',
@@ -236,16 +238,29 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
               Ubicación y Punto de Concentración
             </h4>
 
-            <div>
-              <label className="font-semibold text-slate-700 block mb-1">Nombre del Lugar *</label>
-              <input
-                type="text"
-                required
-                placeholder="Ej. Polideportivo San Juan o Salón Comunal"
-                value={formData.location_name}
-                onChange={(e) => setFormData({ ...formData, location_name: e.target.value })}
-                className="w-full border border-slate-300 rounded-xl p-2 bg-white"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label className="font-semibold text-slate-700 block mb-1">Nombre del Lugar *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej. Polideportivo San Juan o Salón Comunal"
+                  value={formData.location_name}
+                  onChange={(e) => setFormData({ ...formData, location_name: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl p-2 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Zona Territorial</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Comuna 2, Zona Norte o General"
+                  value={formData.zone}
+                  onChange={(e) => setFormData({ ...formData, zone: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl p-2 bg-white"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -12,6 +12,8 @@ import { PrintReportView } from './components/PrintReportView';
 import { ActivityModal } from './components/ActivityModal';
 import { WhatsAppActivityQuickModal } from './components/WhatsAppActivityQuickModal';
 import { LoginModal } from './components/LoginModal';
+import { UsersManagementView } from './components/UsersManagementView';
+import { AuditLogsView } from './components/AuditLogsView';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -174,6 +176,7 @@ export const App: React.FC = () => {
           currentView={currentView}
           onSelectView={setCurrentView}
           summary={stats?.summary}
+          currentUser={currentUser}
         />
 
         {/* Dynamic View Container */}
@@ -188,12 +191,14 @@ export const App: React.FC = () => {
                 <DailyAgendaView
                   activities={activities}
                   selectedDate={selectedDate}
+                  currentUser={currentUser}
                   onDateChange={setSelectedDate}
                   onOpenCreateModal={handleOpenCreateModal}
                   onEditActivity={handleEditActivity}
                   onDeleteActivity={handleDeleteActivity}
                   onUpdateStatus={handleUpdateStatus}
                   onOpenWhatsAppActivity={handleOpenWhatsAppActivity}
+                  onPurgeSuccess={loadInitialData}
                 />
               )}
 
@@ -242,6 +247,14 @@ export const App: React.FC = () => {
                   activities={activities}
                   selectedDate={selectedDate}
                 />
+              )}
+
+              {currentView === 'users' && currentUser?.role === 'admin' && (
+                <UsersManagementView currentUser={currentUser} />
+              )}
+
+              {currentView === 'audit' && currentUser?.role === 'admin' && (
+                <AuditLogsView />
               )}
             </>
           )}

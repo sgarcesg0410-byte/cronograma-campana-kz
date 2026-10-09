@@ -1,4 +1,16 @@
-import { Activity, Contact, DashboardStats, NotificationLog, User, WhatsAppSettings } from '../types';
+import { 
+  Activity, 
+  AuditLog,
+  Contact, 
+  DashboardStats, 
+  NotificationLog, 
+  PurgeDemoResult,
+  TestLiveWhatsAppResponse,
+  User, 
+  UserCreatePayload,
+  UserUpdatePayload,
+  WhatsAppSettings 
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -214,9 +226,87 @@ export const api = {
   },
 
   async getWhatsAppLogs(): Promise<NotificationLog[]> {
-    const res = await fetch(`${API_BASE}/whatsapp/logs`);
+    const res = await fetch(`${API_BASE}/whatsapp/logs`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al obtener historial');
     return data.logs || [];
   },
+
+  // Users & RBAC Management (Admin)
+  async getUsers(): Promise<User[]> {
+    const res = await fetch(`${API_BASE}/users`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al obtener usuarios');
+    return data.users || [];
+  },
+
+  async createUser(payload: UserCreatePayload): Promise<User> {
+    const res = await fetch(`${API_BASE}/users`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al crear usuario');
+    return data.user;
+  },
+
+  async updateUser(id: number, payload: UserUpdatePayload): Promise<User> {
+    const res = await fetch(`${API_BASE}/users/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al actualizar usuario');
+    return data.user;
+  },
+
+  async deleteUser(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/users/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al desactivar usuario');
+  },
+
+  // Safe Demo Data Purge (Admin)
+  async purgeDemo(confirmationPhrase: string): Promise<PurgeDemoResult> {
+    const res = await fetch(`${API_BASE}/activities/purge-demo`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ confirmationPhrase }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al depurar actividades de demostración');
+    return data;
+  },
+
+  // Audit Logs (Admin)
+  async getAuditLogs(limit: number = 50): Promise<AuditLog[]> {
+    const res = await fetch(`${API_BASE}/audit-logs?limit=${limit}`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al cargar bitácora de auditoría');
+    return data.logs || [];
+  },
+
+  // Controlled Live WhatsApp Test
+  async testLiveWhatsApp(phone: string, message?: string): Promise<TestLiveWhatsAppResponse> {
+    const res = await fetch(`${API_BASE}/whatsapp/test-live`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ phone, message }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al despachar prueba en vivo');
+    return data;
+  },
 };
+

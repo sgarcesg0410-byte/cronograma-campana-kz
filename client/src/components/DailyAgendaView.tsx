@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, ActivityCategory, ActivityStatus } from '../types';
+import { Activity, ActivityCategory, ActivityStatus, User, PurgeDemoResult } from '../types';
+import { api } from '../services/api';
 import { 
   Calendar, 
   Clock, 
@@ -26,18 +27,23 @@ import {
   Search,
   Filter,
   FileEdit,
-  Trash2
+  Trash2,
+  Sparkles,
+  ShieldAlert,
+  X
 } from 'lucide-react';
 
 interface DailyAgendaViewProps {
   activities: Activity[];
   selectedDate: string;
+  currentUser?: User | null;
   onDateChange: (date: string) => void;
   onOpenCreateModal: (defaultDate?: string) => void;
   onEditActivity: (activity: Activity) => void;
   onDeleteActivity: (id: number) => void;
   onUpdateStatus: (id: number, status: ActivityStatus) => void;
   onOpenWhatsAppActivity: (activity: Activity, type: 'activity' | 'call_leaders') => void;
+  onPurgeSuccess?: () => void;
 }
 
 export const CATEGORY_CONFIG: Record<ActivityCategory, { label: string; color: string; icon: any }> = {
@@ -62,16 +68,49 @@ export const STATUS_CONFIG: Record<ActivityStatus, { label: string; badge: strin
 export const DailyAgendaView: React.FC<DailyAgendaViewProps> = ({
   activities,
   selectedDate,
+  currentUser,
   onDateChange,
   onOpenCreateModal,
   onEditActivity,
   onDeleteActivity,
   onUpdateStatus,
   onOpenWhatsAppActivity,
+  onPurgeSuccess,
 }) => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Purge Demo Modal States
+  const [isPurgeOpen, setIsPurgeOpen] = useState(false);
+  const [confirmationInput, setConfirmationInput] = useState('');
+  const [purgeLoading, setPurgeLoading] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+  const [purgeResult, setPurgeResult] = useState<PurgeDemoResult | null>(null);
+
+  const totalDemoCount = activities.filter((a) => a.is_demo === 1).length;
+
+  const handlePurgeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (confirmationInput.trim() !== 'INICIAR AGENDA REAL') {
+      setPurgeError('Debe escribir exactamente: INICIAR AGENDA REAL');
+      return;
+    }
+
+    setPurgeLoading(true);
+    setPurgeError(null);
+    try {
+      const res = await api.purgeDemo(confirmationInput.trim());
+      setPurgeResult(res);
+      if (onPurgeSuccess) {
+        onPurgeSuccess();
+      }
+    } catch (err: any) {
+      setPurgeError(err.message || 'Error al depurar actividades de demostración.');
+    } finally {
+      setPurgeLoading(false);
+    }
+  };
 
   // Date navigation helpers
   const handlePrevDay = () => {
@@ -164,7 +203,28 @@ export const DailyAgendaView: React.FC<DailyAgendaViewProps> = ({
         </div>
 
         {/* Right: Date picker & create button */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => {
+                setConfirmationInput('');
+                setPurgeError(null);
+                setPurgeResult(null);
+                setIsPurgeOpen(true);
+              }}
+              className="border border-rose-200 hover:bg-rose-50 text-rose-700 font-bold text-xs px-3 py-2.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-sm"
+              title="Iniciar Agenda Real y depurar eventos de prueba con respaldo auditable"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-rose-600" />
+              <span>Iniciar Agenda Real</span>
+              {totalDemoCount > 0 && (
+                <span className="bg-rose-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+                  {totalDemoCount} demo
+                </span>
+              )}
+            </button>
+          )}
+
           <input
             type="date"
             value={selectedDate}
@@ -289,6 +349,13 @@ export const DailyAgendaView: React.FC<DailyAgendaViewProps> = ({
                         <CatIcon className="w-3.5 h-3.5" />
                         <span>{cat.label}</span>
                       </span>
+
+                      {/* Demo Badge */}
+                      {act.is_demo === 1 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                          DEMO
+                        </span>
+                      )}
                     </div>
 
                     {/* Status Dropdown Selector */}
@@ -447,6 +514,129 @@ export const DailyAgendaView: React.FC<DailyAgendaViewProps> = ({
         </div>
       )}
 
+      {/* Purge Demo Modal */}
+      {isPurgeOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 font-heading text-lg">
+                    Iniciar Agenda Real de Campaña
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Depuración segura y verificable de eventos de prueba
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPurgeOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {purgeResult ? (
+              <div className="space-y-4">
+                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-2">
+                  <div className="font-bold flex items-center gap-1.5 text-sm text-emerald-800">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>{purgeResult.message}</span>
+                  </div>
+                  {purgeResult.backupFile && (
+                    <div className="font-mono text-[11px] text-emerald-700 bg-white/70 p-2 rounded-lg border border-emerald-100">
+                      Archivo de respaldo generado: <span className="font-bold">{purgeResult.backupFile}</span>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-emerald-700">
+                    Quedan {purgeResult.remainingActivitiesCount || 0} actividades oficiales en la base de datos de producción.
+                  </p>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setIsPurgeOpen(false)}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 py-2 rounded-xl text-xs"
+                  >
+                    Cerrar y Continuar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handlePurgeSubmit} className="space-y-4 text-xs">
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 space-y-1.5">
+                  <p className="font-bold text-xs text-rose-800 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    Acción crítica con salvaguarda y respaldo auditable
+                  </p>
+                  <p className="text-[11px] text-rose-700 leading-relaxed">
+                    Esta operación eliminará permanentemente todas las actividades marcadas como prueba (<b>{totalDemoCount} actividades detectadas</b>). Las actividades reales creadas por el equipo no serán eliminadas.
+                  </p>
+                  <p className="text-[11px] text-rose-700 leading-relaxed">
+                    Antes del borrado, el sistema genera automáticamente un <b>respaldo snapshot JSON</b> en disco con trazabilidad auditable y Request ID.
+                  </p>
+                </div>
+
+                {purgeError && (
+                  <div className="p-3 rounded-xl bg-rose-100 border border-rose-300 text-rose-800 font-bold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{purgeError}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1.5">
+                    Para confirmar, escriba exactamente la frase en mayúsculas:
+                  </label>
+                  <div className="p-2 bg-slate-100 rounded-lg text-slate-900 font-mono font-black text-center text-xs tracking-wider border border-slate-200 mb-2 select-all">
+                    INICIAR AGENDA REAL
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Escriba: INICIAR AGENDA REAL"
+                    value={confirmationInput}
+                    onChange={(e) => setConfirmationInput(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsPurgeOpen(false)}
+                    className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 font-bold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={purgeLoading || confirmationInput.trim() !== 'INICIAR AGENDA REAL'}
+                    className={`font-bold px-5 py-2 rounded-xl text-white shadow-sm flex items-center gap-1.5 transition-all ${
+                      confirmationInput.trim() === 'INICIAR AGENDA REAL'
+                        ? 'bg-rose-600 hover:bg-rose-700 cursor-pointer'
+                        : 'bg-slate-400 cursor-not-allowed opacity-60'
+                    }`}
+                  >
+                    {purgeLoading ? (
+                      <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    <span>Confirmar e Iniciar Agenda Real</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
+

@@ -1,7 +1,8 @@
 import { db } from './db.js';
 
-// Helper to format Spanish dates
+// Format date helper in Spanish
 export function formatSpanishDate(dateStr) {
+  if (!dateStr) return '';
   const [year, month, day] = dateStr.split('-');
   const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
   
@@ -32,6 +33,14 @@ const STATUS_ICONS = {
   reprogramado: '🔄 Reprogramado',
   cancelado: '❌ Cancelado'
 };
+
+// Validate E.164 international format (+57...)
+export function validateE164Phone(phone) {
+  if (!phone || typeof phone !== 'string') return false;
+  const cleaned = phone.trim().replace(/\s+/g, '');
+  // General E.164: + followed by 8 to 15 digits
+  return /^\+[1-9]\d{8,14}$/.test(cleaned);
+}
 
 // 1. Format complete daily schedule message
 export function formatDailyAgendaMessage(dateStr, activities) {
@@ -126,8 +135,8 @@ export function formatCallToLeadersMessage(activity) {
   return msg;
 }
 
-// 4. Generate 1-Click WhatsApp Link
-export function generateWhatsAppLink(phone, messageText) {
+// 4. Assisted Human Flow (wa.me direct link generator)
+export function generateAssistedWhatsAppLink(phone, messageText) {
   const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
   const encodedText = encodeURIComponent(messageText);
   if (cleanPhone) {
@@ -136,100 +145,185 @@ export function generateWhatsAppLink(phone, messageText) {
   return `https://api.whatsapp.com/send?text=${encodedText}`;
 }
 
-// 5. Automated Dispatcher (Opción 2: Gateway / API / Simulated)
-export async function sendAutomatedWhatsApp({ phone, recipientName, messageText, activityId = null }) {
-  const settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1') || { provider: 'simulation' };
-  
-  let deliveryStatus = 'sent';
-  let providerResponse = null;
+// 5. Rate limiting store for test-live endpoint (In-memory)
+const testLiveRateLimits = new Map(); // key: userId/ip -> array of timestamps
 
-  try {
-    if (settings.provider === 'simulation') {
-      // High-fidelity simulation: saves to log, available immediately in UI
-      deliveryStatus = 'sent';
-      providerResponse = { simulation: true, note: 'Mensaje despachado y registrado con éxito en simulador de campaña.' };
-    } else if (settings.provider === 'twilio') {
-      if (settings.account_sid && settings.api_token && settings.sender_phone) {
-        const auth = Buffer.from(`${settings.account_sid}:${settings.api_token}`).toString('base64');
-        const params = new URLSearchParams();
-        params.append('From', `whatsapp:${settings.sender_phone}`);
-        params.append('To', `whatsapp:${phone}`);
-        params.append('Body', messageText);
+export function checkTestLiveRateLimit(key, maxAttempts = 5, windowMinutes = 15) {
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  const attempts = (testLiveRateLimits.get(key) || []).filter(ts => now - ts < windowMs);
 
-        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${settings.account_sid}/Messages.json`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Basic ${auth}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: params
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Error Twilio');
-        providerResponse = data;
-      }
-    } else if (settings.provider === 'evolution_api') {
-      if (settings.api_url && settings.api_token) {
-        const cleanNumber = phone.replace(/[^0-9]/g, '');
-        const res = await fetch(`${settings.api_url}/message/sendText`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': settings.api_token
-          },
-          body: JSON.stringify({
-            number: cleanNumber,
-            text: messageText
-          })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Error Evolution API');
-        providerResponse = data;
-      }
-    } else if (settings.provider === 'meta_cloud') {
-      if (settings.api_url && settings.api_token) {
-        const cleanNumber = phone.replace(/[^0-9]/g, '');
-        const res = await fetch(settings.api_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${settings.api_token}`
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: cleanNumber,
-            type: 'text',
-            text: { body: messageText }
-          })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error?.message || 'Error Meta API');
-        providerResponse = data;
-      }
-    }
-  } catch (error) {
-    console.error('Error enviando WhatsApp automático:', error.message);
-    deliveryStatus = 'failed';
-    providerResponse = { error: error.message };
+  if (attempts.length >= maxAttempts) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil((attempts[0] + windowMs - now) / 1000)
+    };
   }
 
-  // Register in notifications log
-  const result = db.run(`
-    INSERT INTO notifications_log (activity_id, recipient_phone, recipient_name, channel, status, message_text)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `, [
-    activityId,
-    phone || 'Todos / Difusión',
-    recipientName || 'Comitiva de Campaña',
-    settings.provider === 'simulation' ? 'whatsapp_simulation' : 'whatsapp_api',
-    deliveryStatus,
-    messageText
-  ]);
+  attempts.push(now);
+  testLiveRateLimits.set(key, attempts);
+  return { allowed: true, remaining: maxAttempts - attempts.length };
+}
 
-  return {
-    success: deliveryStatus === 'sent',
-    logId: result.lastInsertRowid,
-    status: deliveryStatus,
-    response: providerResponse
-  };
+// =========================================================================
+// 6. OFFICIAL PRODUCTION WHATSAPP PROVIDERS (Meta Cloud API, Twilio, Assisted)
+// =========================================================================
+
+// Meta WhatsApp Cloud API Provider (Official Meta Business)
+class MetaCloudProvider {
+  async sendTextMessage({ to, text }) {
+    const token = process.env.META_WA_TOKEN;
+    const phoneId = process.env.META_PHONE_NUMBER_ID;
+
+    if (!token || !phoneId) {
+      return {
+        success: false,
+        status: 'not_configured',
+        error: 'Credenciales de Meta Cloud API no configuradas en variables de entorno (META_WA_TOKEN / META_PHONE_NUMBER_ID).'
+      };
+    }
+
+    const cleanNumber = to.replace(/[^0-9]/g, '');
+    const url = `https://graph.facebook.com/v19.0/${phoneId}/messages`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: cleanNumber,
+          type: 'text',
+          text: { body: text }
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        const errorMsg = data?.error?.message || 'Error en Meta Cloud API';
+        return { success: false, status: 'failed', error: errorMsg };
+      }
+
+      const messageId = data?.messages?.[0]?.id || 'meta-' + Date.now();
+      return {
+        success: true,
+        status: 'queued',
+        provider: 'meta_cloud',
+        messageId
+      };
+    } catch (err) {
+      return {
+        success: false,
+        status: 'network_error',
+        error: 'No se pudo conectar con el servicio de Meta: ' + err.message
+      };
+    }
+  }
+}
+
+// Twilio WhatsApp Provider
+class TwilioProvider {
+  async sendTextMessage({ to, text }) {
+    const sid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_FROM_PHONE;
+
+    if (!sid || !authToken || !fromNumber) {
+      return {
+        success: false,
+        status: 'not_configured',
+        error: 'Credenciales de Twilio no configuradas en variables de entorno.'
+      };
+    }
+
+    try {
+      const auth = Buffer.from(`${sid}:${authToken}`).toString('base64');
+      const params = new URLSearchParams();
+      params.append('From', fromNumber.startsWith('whatsapp:') ? fromNumber : `whatsapp:${fromNumber}`);
+      params.append('To', to.startsWith('whatsapp:') ? to : `whatsapp:${to}`);
+      params.append('Body', text);
+
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, status: 'failed', error: data.message || 'Error Twilio' };
+      }
+
+      return {
+        success: true,
+        status: data.status || 'queued',
+        provider: 'twilio',
+        messageId: data.sid
+      };
+    } catch (err) {
+      return {
+        success: false,
+        status: 'network_error',
+        error: 'No se pudo conectar con Twilio: ' + err.message
+      };
+    }
+  }
+}
+
+// Assisted / Simulation Provider
+class AssistedProvider {
+  async sendTextMessage({ to, text }) {
+    return {
+      success: true,
+      status: 'assisted_flow',
+      provider: 'assisted',
+      messageId: 'assisted-' + Date.now(),
+      note: 'Mensaje generado para canal asistido wa.me'
+    };
+  }
+}
+
+// Provider factory
+export function getWhatsAppProvider(providerName) {
+  const selected = providerName || process.env.WA_PROVIDER || 'assisted';
+  if (selected === 'meta_cloud') return new MetaCloudProvider();
+  if (selected === 'twilio') return new TwilioProvider();
+  return new AssistedProvider();
+}
+
+// Dispatch automated notification safely
+export async function dispatchAutomatedNotification({ phone, recipientName, messageText, activityId = null, providerOverride = null }) {
+  const provider = getWhatsAppProvider(providerOverride);
+  const result = await provider.sendTextMessage({ to: phone, text: messageText });
+
+  // Record in notifications log (excluding tokens/secrets)
+  try {
+    db.run(`
+      INSERT INTO notifications_log (
+        activity_id, recipient_phone, recipient_name, channel, provider,
+        provider_message_id, status, message_text, error_message
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      activityId,
+      phone,
+      recipientName || 'Destinatario de Campaña',
+      result.provider === 'assisted' ? 'whatsapp_assisted' : 'whatsapp_automated',
+      result.provider || 'unknown',
+      result.messageId || null,
+      result.success ? 'sent' : 'failed',
+      messageText,
+      result.error || null
+    ]);
+  } catch (logErr) {
+    console.error('Error registrando notification_log:', logErr.message);
+  }
+
+  return result;
 }
