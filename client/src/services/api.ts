@@ -1,10 +1,17 @@
 import { 
   Activity, 
   AuditLog,
+  CommunityNeed,
+  CommunityNeedCreatePayload,
+  CommunityNeedUpdatePayload,
+  CommunityNeedsStats,
   Contact, 
   DashboardStats, 
   NotificationLog, 
+  NotificationQueueItem,
+  NotificationQueueStats,
   PurgeDemoResult,
+  SimulateIncomingResponse,
   TestLiveWhatsAppResponse,
   User, 
   UserCreatePayload,
@@ -306,6 +313,126 @@ export const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al despachar prueba en vivo');
+    return data;
+  },
+
+  // Community Needs CRUD & Analytics
+  async getCommunityNeeds(params?: {
+    status?: string;
+    category?: string;
+    priority?: string;
+    neighborhood?: string;
+    search?: string;
+    limit?: number;
+  }): Promise<{ needs: CommunityNeed[]; total: number }> {
+    const query = new URLSearchParams();
+    if (params?.status) query.append('status', params.status);
+    if (params?.category) query.append('category', params.category);
+    if (params?.priority) query.append('priority', params.priority);
+    if (params?.neighborhood) query.append('neighborhood', params.neighborhood);
+    if (params?.search) query.append('search', params.search);
+    if (params?.limit) query.append('limit', params.limit.toString());
+
+    const res = await fetch(`${API_BASE}/needs?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al obtener necesidades comunitarias');
+    return { needs: data.needs || [], total: data.total || 0 };
+  },
+
+  async getCommunityNeed(id: number): Promise<CommunityNeed> {
+    const res = await fetch(`${API_BASE}/needs/${id}`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al obtener detalle de necesidad');
+    return data.need;
+  },
+
+  async createCommunityNeed(payload: CommunityNeedCreatePayload): Promise<CommunityNeed> {
+    const res = await fetch(`${API_BASE}/needs`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al registrar necesidad comunitaria');
+    return data.need;
+  },
+
+  async updateCommunityNeed(id: number, payload: CommunityNeedUpdatePayload): Promise<CommunityNeed> {
+    const res = await fetch(`${API_BASE}/needs/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al actualizar necesidad');
+    return data.need;
+  },
+
+  async deleteCommunityNeed(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/needs/${id}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al eliminar necesidad');
+  },
+
+  async getCommunityNeedsStats(): Promise<CommunityNeedsStats> {
+    const res = await fetch(`${API_BASE}/needs/stats/summary`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al cargar estadísticas de necesidades');
+    return data;
+  },
+
+  // WhatsApp Incoming Simulator
+  async simulateIncomingWhatsApp(payload: {
+    messageText: string;
+    senderPhone?: string;
+    messageId?: string;
+  }): Promise<SimulateIncomingResponse> {
+    const res = await fetch(`${API_BASE}/whatsapp/simulate-incoming`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error en la simulación de WhatsApp');
+    return data;
+  },
+
+  // Resilient Notification Queue
+  async getNotificationQueue(): Promise<{ items: NotificationQueueItem[]; stats: NotificationQueueStats }> {
+    const res = await fetch(`${API_BASE}/whatsapp/queue`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al consultar cola de notificaciones');
+    return data;
+  },
+
+  async processNotificationQueueManual(): Promise<{ message: string; processed: number }> {
+    const res = await fetch(`${API_BASE}/whatsapp/queue/process`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al procesar la cola de notificaciones');
+    return data;
+  },
+
+  async retryFailedNotifications(): Promise<{ message: string; count: number }> {
+    const res = await fetch(`${API_BASE}/whatsapp/queue/retry-failed`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al reintentar notificaciones');
     return data;
   },
 };

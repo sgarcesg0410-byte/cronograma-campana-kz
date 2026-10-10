@@ -10,7 +10,8 @@ import {
   Clock,
   Flame,
   ShieldCheck,
-  ShieldAlert
+  ShieldAlert,
+  HeartHandshake
 } from 'lucide-react';
 import { DashboardSummary, User } from '../types';
 
@@ -56,6 +57,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: MessageSquare,
       badge: 'Ambas opciones',
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+    },
+    {
+      id: 'needs',
+      label: 'Necesidades Comunitarias',
+      description: 'Gestión territorial y bot WhatsApp',
+      icon: HeartHandshake,
+      badge: 'Territorio',
+      badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
     },
     {
       id: 'contacts',

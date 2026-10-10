@@ -160,3 +160,120 @@ export interface DashboardStats {
   upcoming: Activity[];
 }
 
+export type NeedCategory =
+  | 'Salud'
+  | 'Ayuda económica'
+  | 'Alimentación'
+  | 'Vivienda'
+  | 'Empleo'
+  | 'Educación'
+  | 'Documentos o trámites'
+  | 'Infraestructura o servicios públicos'
+  | 'Seguridad'
+  | 'Otro';
+
+export type NeedPriority = 'Urgente' | 'Alta' | 'Media' | 'Baja';
+
+export type NeedStatus =
+  | 'pendiente'
+  | 'en_gestion'
+  | 'derivada'
+  | 'atendida'
+  | 'no_viable'
+  | 'cerrada';
+
+export interface CommunityNeed {
+  id: number;
+  reporter_user_id?: number | null;
+  territory_id?: number | null;
+  neighborhood: string;
+  person_name: string;
+  phone: string;
+  phone_masked?: string;
+  category: NeedCategory;
+  description: string;
+  priority: NeedPriority;
+  status: NeedStatus;
+  source: 'whatsapp' | 'manual' | 'web';
+  source_message_id?: string | null;
+  external_ref?: string | null;
+  consent_contact: number;
+  assigned_to?: number | null;
+  notes?: string | null;
+  follow_up_date?: string | null;
+  closed_at?: string | null;
+  closed_by?: number | null;
+  is_demo?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CommunityNeedCreatePayload {
+  neighborhood: string;
+  person_name: string;
+  phone: string;
+  category: NeedCategory;
+  description: string;
+  priority?: NeedPriority;
+  notes?: string;
+  consent_contact?: number;
+}
+
+export interface CommunityNeedUpdatePayload {
+  status?: NeedStatus;
+  category?: NeedCategory;
+  priority?: NeedPriority;
+  assigned_to?: number | null;
+  notes?: string;
+  follow_up_date?: string;
+}
+
+export interface CommunityNeedsStats {
+  total: number;
+  pending: number;
+  inProgress: number;
+  attended: number;
+  urgent: number;
+  byCategory: { category: string; count: number }[];
+  byNeighborhood: { neighborhood: string; count: number }[];
+}
+
+export interface SimulateIncomingResponse {
+  isNeedCommand: boolean;
+  registered?: boolean;
+  needId?: number;
+  replyText: string;
+  data?: Partial<CommunityNeed>;
+}
+
+export interface NotificationQueueItem {
+  id: number;
+  activity_id?: number | null;
+  recipient_phone: string;
+  recipient_name: string;
+  notification_type: string;
+  dedupe_key: string;
+  provider?: string;
+  provider_message_id?: string;
+  status: 'pending' | 'processing' | 'sent' | 'failed' | 'dead_letter' | 'cancelled';
+  message_text: string;
+  scheduled_for: string;
+  next_retry_at?: string;
+  attempts: number;
+  dead_letter: number;
+  sent_at?: string;
+  error_message?: string;
+  request_id?: string;
+  created_at: string;
+}
+
+export interface NotificationQueueStats {
+  pending: number;
+  processing: number;
+  sent: number;
+  failed: number;
+  dead_letter: number;
+  cancelled: number;
+  total: number;
+}
+

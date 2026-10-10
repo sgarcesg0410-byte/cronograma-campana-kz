@@ -14,7 +14,15 @@ import {
   generateAssistedWhatsAppLink,
   validateE164Phone,
   checkTestLiveRateLimit,
-  dispatchAutomatedNotification
+  dispatchAutomatedNotification,
+  validateWebhookSignature,
+  parseCommunityNeedMessage,
+  formatNeedRegisteredConfirmation,
+  formatNeedParseError,
+  enqueueActivityNotification,
+  processNotificationQueue,
+  cancelPendingActivityNotifications,
+  ALLOWED_NEED_CATEGORIES
 } from './whatsappService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,7 +33,13 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'campana_kz_secret_key_2026';
 
 app.use(cors());
-app.use(express.json());
+// OWASP: Limit body size to 64kb and capture rawBody for HMAC-SHA256 signature verification
+app.use(express.json({
+  limit: '64kb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 // Serve static images (logo, etc.)
 app.use('/static', express.static(path.join(__dirname, '../client/public')));
@@ -48,30 +62,35 @@ const ROLE_PERMISSIONS = {
     'activities:read', 'activities:create', 'activities:edit:all', 'activities:delete',
     'reports:read', 'routesheet:read',
     'contacts:read', 'contacts:manage',
+    'needs:read', 'needs:create', 'needs:update', 'needs:delete',
     'whatsapp:preview', 'whatsapp:assisted_share', 'whatsapp:test', 'whatsapp:settings',
     'audit:read'
   ],
   candidato: [
     'activities:read', 'reports:read', 'routesheet:read',
     'contacts:read',
+    'needs:read', 'needs:update',
     'whatsapp:preview', 'whatsapp:assisted_share'
   ],
   coordinador: [
     'activities:read', 'activities:create', 'activities:edit:territory',
     'reports:read', 'routesheet:read',
     'contacts:read', 'contacts:manage',
-    'whatsapp:preview', 'whatsapp:assisted_share'
+    'needs:read', 'needs:create', 'needs:update',
+    'whatsapp:preview', 'whatsapp:assisted_share', 'whatsapp:settings'
   ],
   prensa: [
     'activities:read', 'activities:create:media', 'activities:edit:media',
     'reports:read', 'routesheet:read',
     'contacts:read',
+    'needs:read',
     'whatsapp:preview', 'whatsapp:assisted_share'
   ],
   lider: [
-    'activities:read:zone',
+    'activities:read', 'activities:read:zone',
     'reports:read:basic',
     'contacts:read',
+    'needs:read', 'needs:read:zone', 'needs:create', 'needs:update',
     'whatsapp:preview', 'whatsapp:assisted_share'
   ]
 };
@@ -543,6 +562,52 @@ app.post('/api/activities', authenticateToken, requirePermission('activities:cre
     });
 
     const newActivity = db.queryOne('SELECT * FROM activities WHERE id = ?', [result.lastInsertRowid]);
+
+    // Automatically enqueue notifications in resilient queue
+    try {
+      const reminderMsg = formatActivityReminderMessage(newActivity);
+      const nowIso = new Date().toISOString();
+      const recipients = db.query(`
+        SELECT name, phone FROM contacts
+        WHERE active = 1 AND (name = ? OR (zone = ? AND category IN ('coordinador', 'lider_barrial', 'comitiva')))
+        UNION
+        SELECT name, phone FROM users
+        WHERE active = 1 AND (name = ? OR (zone = ? AND role IN ('coordinador', 'lider', 'candidato')))
+      `, [newActivity.responsible_name, newActivity.zone, newActivity.responsible_name, newActivity.zone]);
+
+      for (const rec of recipients) {
+        if (rec.phone && validateE164Phone(rec.phone)) {
+          enqueueActivityNotification({
+            activityId: newActivity.id,
+            recipientPhone: rec.phone,
+            recipientName: rec.name,
+            notificationType: 'activity_created',
+            dedupeKey: `act_${newActivity.id}_created_${rec.phone}`,
+            scheduledFor: nowIso,
+            messageText: reminderMsg,
+            requestId: req.requestId
+          });
+
+          // Pre-schedule morning-of reminder if in the future
+          const eventMorningIso = `${newActivity.date}T07:00:00.000Z`;
+          if (eventMorningIso > nowIso) {
+            enqueueActivityNotification({
+              activityId: newActivity.id,
+              recipientPhone: rec.phone,
+              recipientName: rec.name,
+              notificationType: 'activity_reminder_morning',
+              dedupeKey: `act_${newActivity.id}_morning_${rec.phone}`,
+              scheduledFor: eventMorningIso,
+              messageText: reminderMsg,
+              requestId: req.requestId
+            });
+          }
+        }
+      }
+    } catch (queueErr) {
+      console.error('[ACTIVITY QUEUE ERROR]', queueErr.message);
+    }
+
     res.status(201).json({ message: 'Actividad programada exitosamente', activity: newActivity });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -596,6 +661,10 @@ app.put('/api/activities/:id', authenticateToken, requirePermission('activities:
       });
     });
 
+    if (status === 'cancelado') {
+      cancelPendingActivityNotifications(req.params.id);
+    }
+
     const updated = db.queryOne('SELECT * FROM activities WHERE id = ?', [req.params.id]);
     res.json({ message: 'Actividad actualizada exitosamente', activity: updated });
   } catch (error) {
@@ -611,6 +680,7 @@ app.delete('/api/activities/:id', authenticateToken, requirePermission('activiti
   }
 
   try {
+    cancelPendingActivityNotifications(req.params.id);
     db.transaction(() => {
       db.run('DELETE FROM activities WHERE id = ?', [req.params.id]);
       recordAudit(req, 'ACTIVITY_DELETED', 'activities', req.params.id, { title: current.title });
@@ -653,14 +723,16 @@ app.post('/api/activities/purge-demo', authenticateToken, requirePermission('age
     // 3. Execute purge in a strict database transaction
     const purgeResult = db.transaction(() => {
       const deleteResult = db.run('DELETE FROM activities WHERE is_demo = 1');
+      const deleteNeeds = db.run('DELETE FROM community_needs WHERE is_demo = 1');
 
       recordAudit(req, 'PURGE_DEMO_COMPLETED', 'activities', 'purge_demo', {
-        deletedCount: deleteResult.changes,
+        deletedActivities: deleteResult.changes,
+        deletedNeeds: deleteNeeds.changes,
         backupFile: backupInfo.filename,
         backupSizeBytes: backupInfo.sizeBytes
       });
 
-      return deleteResult.changes;
+      return deleteResult.changes + deleteNeeds.changes;
     });
 
     const remainingCount = db.queryOne('SELECT COUNT(*) as count FROM activities')?.count || 0;
@@ -852,6 +924,441 @@ app.get('/api/whatsapp/logs', authenticateToken, requirePermission('reports:read
   res.json({ logs });
 });
 
+// Resilient Notification Queue endpoints (Admin & Coordinador)
+app.get('/api/whatsapp/queue', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
+  const items = db.query(`
+    SELECT * FROM notification_queue
+    ORDER BY created_at DESC
+    LIMIT 100
+  `);
+  const stats = {
+    pending: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'pending'")?.count || 0,
+    processing: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'processing'")?.count || 0,
+    sent: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'sent'")?.count || 0,
+    failed: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'failed'")?.count || 0,
+    dead_letter: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'dead_letter'")?.count || 0,
+    cancelled: db.queryOne("SELECT COUNT(*) as count FROM notification_queue WHERE status = 'cancelled'")?.count || 0,
+    total: db.queryOne("SELECT COUNT(*) as count FROM notification_queue")?.count || 0
+  };
+  res.json({ items, stats });
+});
+
+app.post('/api/whatsapp/queue/process', authenticateToken, requirePermission('whatsapp:settings'), async (req, res) => {
+  try {
+    const processed = await processNotificationQueue();
+    recordAudit(req, 'NOTIFICATION_QUEUE_MANUAL_PROCESS', 'notification_queue', 'manual', { processed });
+    res.json({ message: `Cola procesada exitosamente. Se despacharon ${processed} mensajes.`, processed });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al procesar la cola de WhatsApp: ' + err.message });
+  }
+});
+
+app.post('/api/whatsapp/queue/retry-failed', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
+  try {
+    const updated = db.run(`
+      UPDATE notification_queue
+      SET status = 'pending', attempts = 0, dead_letter = 0, next_retry_at = NULL
+      WHERE status IN ('failed', 'dead_letter')
+    `);
+    recordAudit(req, 'NOTIFICATION_QUEUE_RETRY_FAILED', 'notification_queue', 'retry', { affected: updated.changes });
+    res.json({ message: `Se reiniciaron ${updated.changes} notificaciones fallidas para reintento.`, count: updated.changes });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al reiniciar notificaciones: ' + err.message });
+  }
+});
+
+// ==========================================
+// 8. WHATSAPP WEBHOOK: HANDSHAKE & INCOMING MESSAGE PROCESSOR
+// ==========================================
+
+// Webhook Handshake (Meta Hub Verification)
+app.get('/api/whatsapp/incoming', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  const expectedSecret = process.env.WHATSAPP_VERIFY_TOKEN || 'campana_kz_verify_token_2026';
+
+  if (mode && token) {
+    const tokenBuf = Buffer.from(String(token));
+    const expBuf = Buffer.from(String(expectedSecret));
+    const isMatch = tokenBuf.length === expBuf.length && crypto.timingSafeEqual(tokenBuf, expBuf);
+
+    if (mode === 'subscribe' && isMatch) {
+      console.log('[WEBHOOK HANDSHAKE SUCCESS] Meta webhook verificado con éxito.');
+      return res.status(200).send(challenge);
+    }
+  }
+
+  recordAudit(req, 'WEBHOOK_HANDSHAKE_DENIED', 'whatsapp_webhook', 'meta', { ip: req.ip });
+  return res.status(403).json({ error: 'Token de verificación de webhook inválido.' });
+});
+
+// Webhook Message Receiver with HMAC-SHA256 signature verification & Deduplication
+app.post('/api/whatsapp/incoming', async (req, res) => {
+  const signatureHeader = req.headers['x-hub-signature-256'] || req.headers['x-webhook-secret'] || '';
+  const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.WEBHOOK_SECRET || 'campana_kz_webhook_secret_2026';
+
+  const isSignatureValid = validateWebhookSignature(req.rawBody || Buffer.from(JSON.stringify(req.body)), signatureHeader, appSecret);
+  const isDevOrSimulated = process.env.NODE_ENV !== 'production' && req.headers['x-simulation-test'] === 'true';
+
+  if (!isSignatureValid && !isDevOrSimulated) {
+    recordAudit(req, 'WEBHOOK_SIGNATURE_REJECTED', 'whatsapp_webhook', 'incoming', { ip: req.ip });
+    return res.status(401).json({ error: 'Firma de webhook inválida o ausente (X-Hub-Signature-256).' });
+  }
+
+  // Fast response to webhook caller (Meta requires <3s)
+  res.status(200).json({ status: 'received' });
+
+  // Asynchronous processing of incoming message
+  try {
+    const body = req.body;
+    let senderPhone = '';
+    let messageText = '';
+    let providerMessageId = '';
+
+    // 1. Meta Cloud API format
+    if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
+      const msgObj = body.entry[0].changes[0].value.messages[0];
+      senderPhone = msgObj.from ? `+${msgObj.from}` : '';
+      messageText = msgObj.text?.body || '';
+      providerMessageId = msgObj.id || '';
+    }
+    // 2. Evolution API / WAHA format
+    else if (body?.data?.message || body?.message) {
+      const msgData = body.data || body;
+      messageText = msgData.message?.conversation || msgData.message?.extendedTextMessage?.text || msgData.body || '';
+      const jid = msgData.key?.remoteJid || msgData.sender || '';
+      senderPhone = jid ? '+' + jid.split('@')[0] : '';
+      providerMessageId = msgData.key?.id || '';
+    }
+    // 3. Direct simple payload
+    else if (body?.messageText) {
+      senderPhone = body.senderPhone || '';
+      messageText = body.messageText || '';
+      providerMessageId = body.messageId || 'sim-' + Date.now();
+    }
+
+    if (!messageText || !messageText.trim()) return;
+
+    // Deduplication by source_message_id (wamid)
+    if (providerMessageId) {
+      const existing = db.queryOne('SELECT id FROM community_needs WHERE source_message_id = ?', [providerMessageId]);
+      if (existing) {
+        console.log(`[WEBHOOK DEDUPE] Mensaje ya procesado anteriormente (ID: ${providerMessageId})`);
+        return;
+      }
+    }
+
+    // Parse community need command
+    const parseResult = parseCommunityNeedMessage(messageText, senderPhone);
+
+    if (parseResult.isNeedCommand) {
+      if (parseResult.isValid) {
+        const { neighborhood, person_name, phone, category, description, priority, consent_contact } = parseResult.data;
+
+        const insRes = db.run(`
+          INSERT INTO community_needs (
+            neighborhood, person_name, phone, category, description,
+            priority, status, source, source_message_id, consent_contact
+          ) VALUES (?, ?, ?, ?, ?, ?, 'pendiente', 'whatsapp', ?, ?)
+        `, [
+          neighborhood, person_name, phone, category, description,
+          priority, providerMessageId || null, consent_contact
+        ]);
+
+        const newId = insRes.lastInsertRowid;
+        recordAudit(req, 'COMMUNITY_NEED_CREATED_VIA_WHATSAPP', 'community_needs', newId, {
+          neighborhood, category, priority
+        });
+
+        // Send sanitized confirmation back to sender
+        if (senderPhone) {
+          const confirmText = formatNeedRegisteredConfirmation({
+            id: newId,
+            neighborhood,
+            category,
+            priority,
+            status: 'pendiente'
+          });
+          await dispatchAutomatedNotification({
+            phone: senderPhone,
+            recipientName: person_name,
+            messageText: confirmText
+          });
+        }
+      } else {
+        // Return format error with instructions
+        if (senderPhone && parseResult.errorReply) {
+          await dispatchAutomatedNotification({
+            phone: senderPhone,
+            recipientName: 'Ciudadano',
+            messageText: parseResult.errorReply
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[WEBHOOK ASYNC PROCESSING ERROR]', err.message);
+  }
+});
+
+// Interactive Webhook Simulator for Testing from Web UI
+app.post('/api/whatsapp/simulate-incoming', authenticateToken, requirePermission('needs:create'), async (req, res) => {
+  const { senderPhone, messageText } = req.body;
+  if (!messageText) return res.status(400).json({ error: 'Texto del mensaje es requerido.' });
+
+  const parseResult = parseCommunityNeedMessage(messageText, senderPhone);
+
+  if (!parseResult.isNeedCommand) {
+    return res.json({
+      isNeedCommand: false,
+      replyText: 'El mensaje no contiene el comando NECESIDAD. No se realizó ninguna acción.',
+      registered: false
+    });
+  }
+
+  if (!parseResult.isValid) {
+    return res.json({
+      isNeedCommand: true,
+      registered: false,
+      missingFields: parseResult.missingFields,
+      replyText: parseResult.errorReply
+    });
+  }
+
+  const { neighborhood, person_name, phone, category, description, priority, consent_contact } = parseResult.data;
+  const insRes = db.run(`
+    INSERT INTO community_needs (
+      neighborhood, person_name, phone, category, description,
+      priority, status, source, consent_contact, reporter_user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pendiente', 'whatsapp_sim', ?, ?)
+  `, [
+    neighborhood, person_name, phone, category, description,
+    priority, consent_contact, req.user.id
+  ]);
+
+  const newId = insRes.lastInsertRowid;
+  recordAudit(req, 'COMMUNITY_NEED_SIMULATED', 'community_needs', newId, { neighborhood, category });
+
+  const confirmText = formatNeedRegisteredConfirmation({
+    id: newId,
+    neighborhood,
+    category,
+    priority,
+    status: 'pendiente'
+  });
+
+  res.json({
+    isNeedCommand: true,
+    registered: true,
+    needId: newId,
+    replyText: confirmText,
+    data: parseResult.data
+  });
+});
+
+// ==========================================
+// 9. COMMUNITY NEEDS CRUD & ANALYTICS
+// ==========================================
+
+function maskPhone(phone) {
+  if (!phone || phone.length < 7) return phone;
+  const prefix = phone.slice(0, phone.length - 7);
+  const suffix = phone.slice(-4);
+  return `${prefix} *** ${suffix}`;
+}
+
+// List needs with territorial boundary and search
+app.get('/api/needs', authenticateToken, requirePermission('needs:read'), (req, res) => {
+  const { status, category, priority, neighborhood, search, limit = 100 } = req.query;
+
+  let query = 'SELECT * FROM community_needs WHERE 1=1';
+  const params = [];
+
+  if (req.user.role === 'lider' && req.user.zone && req.user.zone !== 'General') {
+    query += ' AND (neighborhood LIKE ? OR neighborhood = ?)';
+    params.push(`%${req.user.zone}%`, req.user.zone);
+  }
+
+  if (status && status !== 'all') {
+    query += ' AND status = ?';
+    params.push(status);
+  }
+  if (category && category !== 'all') {
+    query += ' AND category = ?';
+    params.push(category);
+  }
+  if (priority && priority !== 'all') {
+    query += ' AND priority = ?';
+    params.push(priority);
+  }
+  if (neighborhood && neighborhood !== 'all') {
+    query += ' AND neighborhood LIKE ?';
+    params.push(`%${neighborhood}%`);
+  }
+  if (search) {
+    query += ' AND (person_name LIKE ? OR description LIKE ? OR phone LIKE ? OR neighborhood LIKE ?)';
+    const s = `%${search}%`;
+    params.push(s, s, s, s);
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ?';
+  params.push(Math.min(200, parseInt(limit)));
+
+  const needs = db.query(query, params);
+
+  const canSeeFullPII = ['admin', 'coordinador'].includes(req.user.role);
+  const sanitizedNeeds = needs.map(n => ({
+    ...n,
+    phone_masked: maskPhone(n.phone),
+    phone: canSeeFullPII ? n.phone : maskPhone(n.phone)
+  }));
+
+  res.json({ needs: sanitizedNeeds, total: sanitizedNeeds.length });
+});
+
+// Get single need details
+app.get('/api/needs/:id', authenticateToken, requirePermission('needs:read'), (req, res) => {
+  const need = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [req.params.id]);
+  if (!need) return res.status(404).json({ error: 'Necesidad no encontrada.' });
+
+  recordAudit(req, 'COMMUNITY_NEED_VIEWED', 'community_needs', need.id, { category: need.category });
+  res.json({ need });
+});
+
+// Create manual need
+app.post('/api/needs', authenticateToken, requirePermission('needs:create'), (req, res) => {
+  const {
+    neighborhood,
+    person_name,
+    phone,
+    category,
+    description,
+    priority = 'Media',
+    notes,
+    consent_contact = 1
+  } = req.body;
+
+  if (!neighborhood || !person_name || !phone || !category || !description) {
+    return res.status(400).json({ error: 'Barrio, Persona, Teléfono, Categoría y Descripción son obligatorios.' });
+  }
+
+  if (!validateE164Phone(phone)) {
+    return res.status(400).json({ error: 'El teléfono debe tener formato internacional E.164 (Ej. +573001234567).' });
+  }
+
+  if (!ALLOWED_NEED_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: `Categoría inválida. Permitidas: ${ALLOWED_NEED_CATEGORIES.join(', ')}` });
+  }
+
+  try {
+    const result = db.run(`
+      INSERT INTO community_needs (
+        neighborhood, person_name, phone, category, description,
+        priority, status, source, notes, consent_contact, reporter_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pendiente', 'manual', ?, ?, ?)
+    `, [
+      neighborhood.trim(), person_name.trim(), phone.trim(), category, description.trim(),
+      priority, notes ? notes.trim() : null, consent_contact ? 1 : 0, req.user.id
+    ]);
+
+    const newId = result.lastInsertRowid;
+    recordAudit(req, 'COMMUNITY_NEED_CREATED_MANUAL', 'community_needs', newId, {
+      neighborhood, category, priority
+    });
+
+    const created = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [newId]);
+    res.status(201).json({ message: 'Necesidad comunitaria registrada con éxito.', need: created });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al registrar necesidad: ' + err.message });
+  }
+});
+
+// Update need status / follow-up
+app.put('/api/needs/:id', authenticateToken, requirePermission('needs:update'), (req, res) => {
+  const targetId = parseInt(req.params.id);
+  const current = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [targetId]);
+  if (!current) return res.status(404).json({ error: 'Necesidad no encontrada.' });
+
+  const { status, notes, priority, assigned_to, follow_up_date, category } = req.body;
+
+  let closedAt = current.closed_at;
+  let closedBy = current.closed_by;
+  if (status && ['atendida', 'cerrada', 'no_viable'].includes(status) && !current.closed_at) {
+    closedAt = new Date().toISOString();
+    closedBy = req.user.id;
+  }
+
+  try {
+    db.run(`
+      UPDATE community_needs SET
+        status = ?,
+        notes = ?,
+        priority = ?,
+        assigned_to = ?,
+        follow_up_date = ?,
+        category = ?,
+        closed_at = ?,
+        closed_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      status || current.status,
+      notes !== undefined ? notes : current.notes,
+      priority || current.priority,
+      assigned_to !== undefined ? assigned_to : current.assigned_to,
+      follow_up_date !== undefined ? follow_up_date : current.follow_up_date,
+      category || current.category,
+      closedAt,
+      closedBy,
+      targetId
+    ]);
+
+    recordAudit(req, 'COMMUNITY_NEED_UPDATED', 'community_needs', targetId, {
+      oldStatus: current.status,
+      newStatus: status || current.status
+    });
+
+    const updated = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [targetId]);
+    res.json({ message: 'Necesidad actualizada exitosamente.', need: updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al actualizar necesidad: ' + err.message });
+  }
+});
+
+// Delete need (Admin only)
+app.delete('/api/needs/:id', authenticateToken, requirePermission('needs:delete'), (req, res) => {
+  const targetId = parseInt(req.params.id);
+  const current = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [targetId]);
+  if (!current) return res.status(404).json({ error: 'Necesidad no encontrada.' });
+
+  db.run('DELETE FROM community_needs WHERE id = ?', [targetId]);
+  recordAudit(req, 'COMMUNITY_NEED_DELETED', 'community_needs', targetId, { neighborhood: current.neighborhood });
+  res.json({ message: 'Registro de necesidad eliminado con éxito.' });
+});
+
+// Needs KPI statistics
+app.get('/api/needs/stats/summary', authenticateToken, requirePermission('needs:read'), (req, res) => {
+  const total = db.queryOne('SELECT COUNT(*) as count FROM community_needs')?.count || 0;
+  const pending = db.queryOne("SELECT COUNT(*) as count FROM community_needs WHERE status = 'pendiente'")?.count || 0;
+  const inProgress = db.queryOne("SELECT COUNT(*) as count FROM community_needs WHERE status = 'en_gestion'")?.count || 0;
+  const attended = db.queryOne("SELECT COUNT(*) as count FROM community_needs WHERE status = 'atendida'")?.count || 0;
+  const urgent = db.queryOne("SELECT COUNT(*) as count FROM community_needs WHERE priority IN ('Urgente', 'Alta') AND status NOT IN ('atendida', 'cerrada')")?.count || 0;
+
+  const byCategory = db.query('SELECT category, COUNT(*) as count FROM community_needs GROUP BY category ORDER BY count DESC');
+  const byNeighborhood = db.query('SELECT neighborhood, COUNT(*) as count FROM community_needs GROUP BY neighborhood ORDER BY count DESC LIMIT 8');
+
+  res.json({
+    total,
+    pending,
+    inProgress,
+    attended,
+    urgent,
+    byCategory,
+    byNeighborhood
+  });
+});
+
 // SPA static serving and fallback
 const distPath = path.join(__dirname, '../client/dist');
 app.use(express.static(distPath));
@@ -866,11 +1373,57 @@ app.use((req, res) => {
 // Initialize database and start server
 async function startServer() {
   await initDatabase();
+
+  // Background cron worker: Process resilient notification queue every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const processed = await processNotificationQueue();
+      if (processed > 0) {
+        console.log(`[CRON QUEUE] Despachadas ${processed} notificaciones de WhatsApp pendientes`);
+      }
+    } catch (err) {
+      console.error('[CRON QUEUE ERROR]', err.message);
+    }
+  });
+
+  // Daily agenda broadcast worker at 07:00 AM
+  cron.schedule('0 7 * * *', async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const todayActivities = db.query("SELECT * FROM activities WHERE date = ? AND status != 'cancelado' ORDER BY start_time ASC", [today]);
+      if (todayActivities.length > 0) {
+        const message = formatDailyAgendaMessage(today, todayActivities);
+        const recipients = db.query(`
+          SELECT name, phone FROM contacts WHERE active = 1 AND phone IS NOT NULL AND phone != ''
+          UNION
+          SELECT name, phone FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != ''
+        `);
+        for (const r of recipients) {
+          if (validateE164Phone(r.phone)) {
+            enqueueActivityNotification({
+              activityId: null,
+              recipientPhone: r.phone,
+              recipientName: r.name,
+              notificationType: 'daily_agenda',
+              dedupeKey: `agenda_${today}_${r.phone}`,
+              scheduledFor: new Date().toISOString(),
+              messageText: message
+            });
+          }
+        }
+        await processNotificationQueue();
+      }
+    } catch (cronErr) {
+      console.error('[DAILY AGONDA CRON ERROR]', cronErr.message);
+    }
+  });
+
   app.listen(PORT, () => {
     console.log(`\n======================================================`);
     console.log(`  🚀 SERVIDOR DE PRODUCCIÓN #VOY CON EL KZ ACTIVO`);
     console.log(`  📍 App Web + Backend URL: http://localhost:${PORT}`);
     console.log(`  🔑 Base de datos SQLite inicializada y persistente`);
+    console.log(`  ⏰ Cola de notificaciones y cron workers activos`);
     console.log(`======================================================\n`);
   });
 }

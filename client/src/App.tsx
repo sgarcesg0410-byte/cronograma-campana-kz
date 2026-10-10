@@ -14,6 +14,7 @@ import { WhatsAppActivityQuickModal } from './components/WhatsAppActivityQuickMo
 import { LoginModal } from './components/LoginModal';
 import { UsersManagementView } from './components/UsersManagementView';
 import { AuditLogsView } from './components/AuditLogsView';
+import { CommunityNeedsView } from './components/CommunityNeedsView';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -231,6 +232,10 @@ export const App: React.FC = () => {
                   contacts={contacts}
                   selectedDate={selectedDate}
                 />
+              )}
+
+              {currentView === 'needs' && (
+                <CommunityNeedsView currentUser={currentUser} />
               )}
 
               {currentView === 'contacts' && (

@@ -104,6 +104,8 @@ export function createDatabaseBackup(reason = 'manual', userIdentifier = 'system
       users: db.query('SELECT id, name, email, role, zone, phone, active, created_at FROM users'),
       activities: db.query('SELECT * FROM activities'),
       contacts: db.query('SELECT * FROM contacts'),
+      community_needs: (function() { try { return db.query('SELECT * FROM community_needs'); } catch(_) { return []; } })(),
+      notification_queue: (function() { try { return db.query('SELECT * FROM notification_queue'); } catch(_) { return []; } })(),
       audit_logs: db.query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500')
     }
   };
@@ -244,6 +246,69 @@ export async function initDatabase() {
     );
   `);
 
+  // 7. Community Needs table (Gestión Territorial y Solicitudes Ciudadanas)
+  sqlDb.exec(`
+    CREATE TABLE IF NOT EXISTS community_needs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reporter_user_id INTEGER,
+      territory_id INTEGER,
+      neighborhood TEXT NOT NULL,
+      person_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN (
+        'Salud', 'Ayuda económica', 'Alimentación', 'Vivienda', 
+        'Empleo', 'Educación', 'Documentos o trámites', 
+        'Infraestructura o servicios públicos', 'Seguridad', 'Otro'
+      )),
+      description TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'Media' CHECK(priority IN ('Urgente', 'Alta', 'Media', 'Baja')),
+      status TEXT NOT NULL DEFAULT 'pendiente' CHECK(status IN (
+        'pendiente', 'en_gestion', 'derivada', 'atendida', 'no_viable', 'cerrada'
+      )),
+      source TEXT NOT NULL DEFAULT 'whatsapp' CHECK(source IN ('whatsapp', 'manual', 'web')),
+      source_message_id TEXT UNIQUE,
+      external_ref TEXT,
+      consent_contact INTEGER NOT NULL DEFAULT 1,
+      assigned_to INTEGER,
+      notes TEXT,
+      follow_up_date TEXT,
+      closed_at TEXT,
+      closed_by INTEGER,
+      is_demo INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_needs_status ON community_needs(status);
+    CREATE INDEX IF NOT EXISTS idx_needs_neighborhood ON community_needs(neighborhood);
+    CREATE INDEX IF NOT EXISTS idx_needs_source_msg ON community_needs(source_message_id);
+  `);
+
+  // 8. Idempotent Notification Queue table (Cola Resiliente con Dedupe y Backoff)
+  sqlDb.exec(`
+    CREATE TABLE IF NOT EXISTS notification_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id INTEGER,
+      recipient_phone TEXT NOT NULL,
+      recipient_name TEXT,
+      notification_type TEXT NOT NULL,
+      dedupe_key TEXT UNIQUE NOT NULL,
+      provider TEXT DEFAULT 'assisted',
+      provider_message_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'sent', 'failed', 'dead_letter', 'cancelled')),
+      message_text TEXT NOT NULL,
+      scheduled_for TEXT NOT NULL,
+      next_retry_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      dead_letter INTEGER NOT NULL DEFAULT 0,
+      sent_at TEXT,
+      error_message TEXT,
+      request_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_queue_poll ON notification_queue(status, scheduled_for, dead_letter);
+    CREATE INDEX IF NOT EXISTS idx_queue_dedupe ON notification_queue(dedupe_key);
+  `);
+
   // Migrations: ensure columns exist if DB was created earlier
   runMigrations();
 
@@ -286,6 +351,13 @@ function runMigrations() {
   } catch (e) {
     // Column might already exist
   }
+
+  // Ensure notifications_log has provider, provider_message_id, error_message
+  try {
+    try { db.exec("ALTER TABLE notifications_log ADD COLUMN provider TEXT DEFAULT 'assisted';"); } catch (_) {}
+    try { db.exec("ALTER TABLE notifications_log ADD COLUMN provider_message_id TEXT;"); } catch (_) {}
+    try { db.exec("ALTER TABLE notifications_log ADD COLUMN error_message TEXT;"); } catch (_) {}
+  } catch (e) {}
 }
 
 function seedData() {
