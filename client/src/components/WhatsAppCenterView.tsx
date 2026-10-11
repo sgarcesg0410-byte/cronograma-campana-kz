@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Contact, NotificationLog, WhatsAppSettings, TestLiveWhatsAppResponse } from '../types';
+import { Activity, AuthorizedRecipient, CampaignRole, Contact, NotificationLog, WhatsAppSettings, TestLiveWhatsAppResponse } from '../types';
 import { api } from '../services/api';
 import { 
   MessageSquare, 
@@ -20,8 +20,33 @@ import {
   Clock,
   Smartphone,
   ShieldCheck,
-  Activity as PulseIcon
+  Activity as PulseIcon,
+  Trash2,
+  UserPlus,
+  Shield,
+  Moon,
+  Bell,
+  BellOff,
+  AlertTriangle
 } from 'lucide-react';
+
+const CAMPAIGN_ROLE_LABELS: Record<CampaignRole, string> = {
+  admin: 'Administrador General',
+  candidato: 'Candidato (#VOY CON EL KZ)',
+  coordinador: 'Coordinador General / Logístico',
+  prensa: 'Comunicaciones y Prensa',
+  lider: 'Líder Comunal / Territorial',
+  avanzada: 'Equipo de Avanzada / Seguridad',
+};
+
+const CAMPAIGN_ROLE_BADGES: Record<CampaignRole, string> = {
+  admin: 'bg-purple-100 text-purple-800 border-purple-200',
+  candidato: 'bg-amber-100 text-amber-800 border-amber-200',
+  coordinador: 'bg-blue-100 text-blue-800 border-blue-200',
+  prensa: 'bg-pink-100 text-pink-800 border-pink-200',
+  lider: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  avanzada: 'bg-orange-100 text-orange-800 border-orange-200',
+};
 
 interface WhatsAppCenterViewProps {
   activities: Activity[];
@@ -51,6 +76,14 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState<string | null>(null);
   const [sendingSingle, setSendingSingle] = useState(false);
+
+  // New Authorized Recipient Form States & Feedback
+  const [newAuthName, setNewAuthName] = useState<string>('');
+  const [newAuthPhone, setNewAuthPhone] = useState<string>('+57');
+  const [newAuthRole, setNewAuthRole] = useState<CampaignRole>('coordinador');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState<boolean>(false);
+  const [settingsStatusMsg, setSettingsStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Live Test Diagnostic States
   const [testPhone, setTestPhone] = useState<string>('+57');
@@ -161,15 +194,94 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
     }
   };
 
+  const handleAddRecipient = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (!settings) return;
+
+    const trimmedName = newAuthName.trim();
+    const trimmedPhone = newAuthPhone.trim();
+    const phoneRegex = /^\+[1-9]\d{7,14}$/;
+
+    if (trimmedName.length < 2) {
+      setAuthError('El nombre debe tener al menos 2 caracteres.');
+      return;
+    }
+    if (!phoneRegex.test(trimmedPhone)) {
+      setAuthError('El teléfono debe tener formato internacional E.164 (Ej. +573001234567).');
+      return;
+    }
+
+    const currentList = settings.authorized_phones || [];
+    if (currentList.length >= 20) {
+      setAuthError('Se ha alcanzado el límite máximo de 20 destinatarios autorizados.');
+      return;
+    }
+
+    if (currentList.some(r => r.phone === trimmedPhone)) {
+      setAuthError(`El número ${trimmedPhone} ya existe en la lista de destinatarios.`);
+      return;
+    }
+
+    const updatedList: AuthorizedRecipient[] = [
+      ...currentList,
+      {
+        name: trimmedName,
+        phone: trimmedPhone,
+        role: newAuthRole,
+        active: true,
+      }
+    ];
+
+    setSettings({
+      ...settings,
+      authorized_phones: updatedList,
+    });
+    setNewAuthName('');
+    setNewAuthPhone('+57');
+    setNewAuthRole('coordinador');
+  };
+
+  const handleRemoveRecipient = (indexToRemove: number) => {
+    if (!settings) return;
+    const currentList = settings.authorized_phones || [];
+    const updatedList = currentList.filter((_, idx) => idx !== indexToRemove);
+    setSettings({
+      ...settings,
+      authorized_phones: updatedList,
+    });
+  };
+
+  const handleToggleRecipient = (indexToToggle: number) => {
+    if (!settings) return;
+    const currentList = settings.authorized_phones || [];
+    const updatedList = currentList.map((rec, idx) => {
+      if (idx === indexToToggle) {
+        return { ...rec, active: !rec.active };
+      }
+      return rec;
+    });
+    setSettings({
+      ...settings,
+      authorized_phones: updatedList,
+    });
+  };
+
   // Save Settings
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!settings) return;
+    setSettingsSaving(true);
+    setSettingsStatusMsg(null);
     try {
-      await api.updateWhatsAppSettings(settings);
-      alert('Configuración guardada exitosamente');
+      const updated = await api.updateWhatsAppSettings(settings);
+      setSettings(updated);
+      setSettingsStatusMsg({ type: 'success', text: 'Configuración de WhatsApp guardada exitosamente.' });
+      setTimeout(() => setSettingsStatusMsg(null), 4000);
     } catch (err: any) {
-      alert('Error: ' + err.message);
+      setSettingsStatusMsg({ type: 'error', text: err.message || 'Error al guardar la configuración' });
+    } finally {
+      setSettingsSaving(false);
     }
   };
 
@@ -632,117 +744,544 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
         </div>
       )}
 
-      {/* TAB 3: SETTINGS (API PROVIDERS & CRON) */}
+      {/* TAB 3: SETTINGS (PRIMARY PHONE, AUTHORIZED RECIPIENTS, ALERTS, QUIET HOURS & PROVIDER) */}
       {activeTab === 'settings' && settings && (
-        <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-sm max-w-3xl">
-          <h3 className="text-lg font-black text-slate-900 font-heading mb-1 flex items-center gap-2">
-            <Settings className="w-5 h-5 text-[#38b6ff]" />
-            Configuración del Conector de WhatsApp
-          </h3>
-          <p className="text-xs text-slate-500 mb-6">
-            Selecciona si deseas operar en modo de simulación o conectar tu proveedor de mensajería empresarial.
-          </p>
-
-          <form onSubmit={handleSaveSettings} className="space-y-4 text-xs sm:text-sm">
-            
-            {/* Provider selection */}
-            <div>
-              <label className="font-bold text-slate-700 block mb-1.5">
-                Proveedor de Envío
-              </label>
-              <select
-                value={settings.provider}
-                onChange={(e) => setSettings({ ...settings, provider: e.target.value as any })}
-                className="w-full border border-slate-300 rounded-xl p-2.5 bg-slate-50 text-slate-800 focus:ring-2 focus:ring-[#38b6ff]"
-              >
-                <option value="simulation">Simulador Activo de Campaña (Recomendado sin costo / Pruebas)</option>
-                <option value="twilio">Twilio WhatsApp Business API</option>
-                <option value="evolution_api">Evolution API / Baileys (WhatsApp conectado por QR)</option>
-                <option value="meta_cloud">Meta WhatsApp Cloud API (Oficial)</option>
-              </select>
-            </div>
-
-            {settings.provider !== 'simulation' && (
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">
-                    API URL / Endpoint
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.api_url || ''}
-                    onChange={(e) => setSettings({ ...settings, api_url: e.target.value })}
-                    placeholder="https://api.twilio.com o http://localhost:8080"
-                    className="w-full border border-slate-300 rounded-lg p-2 bg-white"
-                  />
+        <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-sm max-w-4xl space-y-8">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 bg-[#38b6ff]/10 text-[#0284c7] rounded-xl flex items-center justify-center font-bold">
+                  <Settings className="w-5 h-5 text-[#38b6ff]" />
                 </div>
-
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">
-                    API Token / Auth Secret
-                  </label>
-                  <input
-                    type="password"
-                    value={settings.api_token || ''}
-                    onChange={(e) => setSettings({ ...settings, api_token: e.target.value })}
-                    placeholder="Token secreto"
-                    className="w-full border border-slate-300 rounded-lg p-2 bg-white"
-                  />
+                  <h3 className="text-lg font-black text-slate-900 font-heading">
+                    Centro de Configuración de WhatsApp y Notificaciones en Tiempo Real
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Defina el número principal de campaña, destinatarios autorizados, disparadores automáticos, horas silenciosas y canal de salida.
+                  </p>
                 </div>
-
-                {settings.provider === 'twilio' && (
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">
-                      Twilio Account SID
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.account_sid || ''}
-                      onChange={(e) => setSettings({ ...settings, account_sid: e.target.value })}
-                      placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      className="w-full border border-slate-300 rounded-lg p-2 bg-white"
-                    />
-                  </div>
-                )}
               </div>
-            )}
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                Zona: America/Bogota (UTC-5)
+              </span>
+            </div>
+          </div>
 
-            {/* Automation parameters */}
-            <div className="pt-3 border-t border-slate-200 space-y-3">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="auto_reminders"
-                  checked={Boolean(settings.auto_reminders_enabled)}
-                  onChange={(e) => setSettings({ ...settings, auto_reminders_enabled: e.target.checked ? 1 : 0 })}
-                  className="rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
-                />
-                <label htmlFor="auto_reminders" className="font-bold text-slate-800 cursor-pointer">
-                  Activar recordatorios automáticos de eventos próximos (Background Cron)
-                </label>
+          {settingsStatusMsg && (
+            <div className={`p-4 rounded-xl text-xs font-semibold flex items-center gap-2.5 border ${
+              settingsStatusMsg.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}>
+              {settingsStatusMsg.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              )}
+              <span>{settingsStatusMsg.text}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveSettings} className="space-y-8 text-xs sm:text-sm">
+            
+            {/* SECCIÓN 1: NÚMERO PRINCIPAL Y DISPARADORES EN TIEMPO REAL */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-[#38b6ff]" />
+                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
+                    1. Destinatario Principal y Disparadores Automáticos
+                  </h4>
+                </div>
+                <span className="text-[11px] font-medium text-slate-500">
+                  Despacho en segundos vía cola de mensajería
+                </span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  Anticipación de recordatorio (Minutos antes del evento)
+                <label className="font-bold text-slate-800 block mb-1">
+                  Número Principal de WhatsApp de Campaña (E.164) *
                 </label>
-                <input
-                  type="number"
-                  min="15"
-                  max="180"
-                  value={settings.reminder_minutes_before}
-                  onChange={(e) => setSettings({ ...settings, reminder_minutes_before: Number(e.target.value) })}
-                  className="w-32 border border-slate-300 rounded-lg p-2 bg-slate-50"
-                />
+                <div className="max-w-md">
+                  <input
+                    type="text"
+                    required
+                    placeholder="+573001234567"
+                    value={settings.primary_phone || ''}
+                    onChange={(e) => setSettings({ ...settings, primary_phone: e.target.value })}
+                    className="w-full border border-slate-300 rounded-xl p-2.5 font-mono text-sm bg-white text-slate-900 focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Número al que se remitirán todas las alertas de alta prioridad (candidato, jefe de campaña o central operativa).
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-2">
+                  Eventos que Disparan Mensajes Automáticos Inmediatos:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex items-start gap-3 p-3 bg-white rounded-xl border border-slate-200 hover:border-[#38b6ff] cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.notify_on_create !== 0}
+                      onChange={(e) => setSettings({ ...settings, notify_on_create: e.target.checked ? 1 : 0 })}
+                      className="mt-0.5 rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block text-xs">📢 Creación de Eventos</span>
+                      <span className="text-[11px] text-slate-500">
+                        Envía alerta instantánea en segundos apenas el evento se guarda en la base de datos.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 p-3 bg-white rounded-xl border border-slate-200 hover:border-[#38b6ff] cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.notify_on_update !== 0}
+                      onChange={(e) => setSettings({ ...settings, notify_on_update: e.target.checked ? 1 : 0 })}
+                      className="mt-0.5 rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block text-xs">⚠️ Cambios Relevantes en la Agenda</span>
+                      <span className="text-[11px] text-slate-500">
+                        Diff inteligente: solo avisa si cambia fecha, hora, lugar o responsable (omite notas internas).
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 p-3 bg-white rounded-xl border border-slate-200 hover:border-[#38b6ff] cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.notify_on_cancel !== 0}
+                      onChange={(e) => setSettings({ ...settings, notify_on_cancel: e.target.checked ? 1 : 0 })}
+                      className="mt-0.5 rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block text-xs">🚫 Cancelación Inmediata</span>
+                      <span className="text-[11px] text-slate-500">
+                        Aviso urgente de cancelación y anulación en cascada de recordatorios programados en cola.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 p-3 bg-white rounded-xl border border-slate-200 hover:border-[#38b6ff] cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={settings.notify_on_reminders !== 0}
+                      onChange={(e) => setSettings({ ...settings, notify_on_reminders: e.target.checked ? 1 : 0 })}
+                      className="mt-0.5 rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block text-xs">⏰ Recordatorios Escalonados</span>
+                      <span className="text-[11px] text-slate-500">
+                        Encola automáticamente recordatorios a 7 días, 3 días, 1 día antes y el mismo día al salir.
+                      </span>
+                    </div>
+                  </label>
+                </div>
               </div>
             </div>
 
-            <div className="pt-4">
+            {/* SECCIÓN 2: DESTINATARIOS AUTORIZADOS DINÁMICOS */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#38b6ff]" />
+                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
+                    2. Destinatarios Autorizados para Alertas
+                  </h4>
+                </div>
+                <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  (settings.authorized_phones?.length || 0) >= 20
+                    ? 'bg-rose-100 text-rose-800 border-rose-300'
+                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                }`}>
+                  {settings.authorized_phones?.length || 0} / 20 destinatarios
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600">
+                Contactos clave que recibirán las notificaciones automáticas según su rol (Candidato, Coordinador, Prensa, Líderes o Avanzada).
+              </p>
+
+              {/* Formulario Inline para Agregar Destinatario */}
+              <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
+                <h5 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <UserPlus className="w-3.5 h-3.5 text-[#38b6ff]" />
+                  Agregar Nuevo Destinatario Autorizado
+                </h5>
+
+                {authError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                  <div className="sm:col-span-4">
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Nombre Completo</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Dra. Claudia Morales"
+                      value={newAuthName}
+                      onChange={(e) => setNewAuthName(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-4">
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">WhatsApp (E.164)</label>
+                    <input
+                      type="text"
+                      placeholder="+573001234567"
+                      value={newAuthPhone}
+                      onChange={(e) => setNewAuthPhone(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">Rol en Campaña</label>
+                    <select
+                      value={newAuthRole}
+                      onChange={(e) => setNewAuthRole(e.target.value as CampaignRole)}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-slate-50 focus:bg-white focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                    >
+                      <option value="coordinador">Coordinador</option>
+                      <option value="candidato">Candidato</option>
+                      <option value="prensa">Prensa</option>
+                      <option value="lider">Líder</option>
+                      <option value="avanzada">Avanzada</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-1">
+                    <button
+                      type="button"
+                      onClick={handleAddRecipient}
+                      className="w-full bg-[#38b6ff] hover:bg-[#20a7f5] text-slate-950 font-bold p-2 rounded-lg flex items-center justify-center transition-transform hover:scale-105"
+                      title="Agregar destinatario a la lista"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de Destinatarios Actuales */}
+              <div className="space-y-2">
+                {(!settings.authorized_phones || settings.authorized_phones.length === 0) ? (
+                  <div className="p-4 bg-white rounded-xl border border-dashed border-slate-300 text-center text-xs text-slate-400">
+                    No hay destinatarios autorizados adicionales configurados. Las notificaciones se enviarán exclusivamente al número principal.
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                    {settings.authorized_phones.map((rec, idx) => (
+                      <div key={idx} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${
+                            rec.active ? 'bg-slate-100 text-slate-700' : 'bg-slate-50 text-slate-300'
+                          }`}>
+                            {idx + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-bold text-xs truncate ${rec.active ? 'text-slate-900' : 'text-slate-400 line-through'}`}>
+                                {rec.name}
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                CAMPAIGN_ROLE_BADGES[rec.role] || 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}>
+                                {CAMPAIGN_ROLE_LABELS[rec.role] || rec.role}
+                              </span>
+                            </div>
+                            <span className="font-mono text-[11px] text-slate-500 block">
+                              {rec.phone}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleRecipient(idx)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 border transition-colors ${
+                              rec.active
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                            }`}
+                            title={rec.active ? 'Desactivar notificaciones para este contacto' : 'Activar notificaciones para este contacto'}
+                          >
+                            {rec.active ? (
+                              <>
+                                <Bell className="w-3 h-3 text-emerald-600" />
+                                <span>Activo</span>
+                              </>
+                            ) : (
+                              <>
+                                <BellOff className="w-3 h-3 text-slate-400" />
+                                <span>Inactivo</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveRecipient(idx)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Eliminar de la lista de destinatarios"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SECCIÓN 3: HORAS SILENCIOSAS (AMERICA/BOGOTA UTC-5) */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Moon className="w-4 h-4 text-indigo-600" />
+                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
+                    3. Horas Silenciosas Nocturnas (America/Bogota)
+                  </h4>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="quiet_hours_enabled"
+                    checked={settings.quiet_hours_enabled !== 0}
+                    onChange={(e) => setSettings({ ...settings, quiet_hours_enabled: e.target.checked ? 1 : 0 })}
+                    className="rounded text-[#38b6ff] focus:ring-[#38b6ff] w-4 h-4 cursor-pointer"
+                  />
+                  <label htmlFor="quiet_hours_enabled" className="text-xs font-bold text-slate-800 cursor-pointer">
+                    Activar Descanso Nocturno
+                  </label>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl text-xs text-indigo-950 flex items-start gap-2.5">
+                <Moon className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold">Política de Mensajería Nocturna Protegida:</p>
+                  <p className="text-[11px] text-indigo-900 leading-relaxed">
+                    Los recordatorios no urgentes programados durante este rango son postergados automáticamente para despacharse a las 06:00 AM del día siguiente.
+                    <span className="font-bold underline ml-1">
+                      Las cancelaciones de eventos y modificaciones urgentes NUNCA se silencian y se despachan de inmediato.
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {settings.quiet_hours_enabled !== 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 max-w-md">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Inicio de Horas Silenciosas (HH:MM)
+                    </label>
+                    <input
+                      type="time"
+                      value={settings.quiet_hours_start || '22:00'}
+                      onChange={(e) => setSettings({ ...settings, quiet_hours_start: e.target.value })}
+                      className="w-full border border-slate-300 rounded-xl p-2.5 font-mono text-xs bg-white focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Fin de Horas Silenciosas (HH:MM)
+                    </label>
+                    <input
+                      type="time"
+                      value={settings.quiet_hours_end || '06:00'}
+                      onChange={(e) => setSettings({ ...settings, quiet_hours_end: e.target.value })}
+                      className="w-full border border-slate-300 rounded-xl p-2.5 font-mono text-xs bg-white focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN 4: PROVEEDOR DE MENSAJERÍA Y CREDENCIALES */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-[#38b6ff]" />
+                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
+                    4. Proveedor de Salida de WhatsApp
+                  </h4>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-1.5">
+                  Proveedor de Envío Activo
+                </label>
+                <select
+                  value={settings.provider}
+                  onChange={(e) => setSettings({ ...settings, provider: e.target.value as any })}
+                  className="w-full border border-slate-300 rounded-xl p-2.5 bg-white text-slate-900 text-xs sm:text-sm font-medium focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
+                >
+                  <option value="simulation">Simulador Activo de Campaña (Recomendado sin costo / Pruebas)</option>
+                  <option value="meta_cloud">Meta WhatsApp Cloud API (Oficial para Producción)</option>
+                  <option value="twilio">Twilio WhatsApp Business API (Oficial)</option>
+                  <option value="evolution_api">Evolution API / Baileys (Bot WhatsApp por QR - Línea Dedicada)</option>
+                </select>
+              </div>
+
+              {/* Advertencia Crítica para Bot Conectado por QR */}
+              {settings.provider === 'evolution_api' && (
+                <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl text-xs space-y-2 text-amber-950">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>ADVERTENCIA CRÍTICA DE SEGURIDAD OPERATIVA (BOT QR)</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-amber-900">
+                    WhatsApp prohíbe el uso de bots no oficiales en números personales y puede aplicar bloqueos o suspensiones por envíos masivos.
+                  </p>
+                  <ul className="list-disc list-inside text-[11px] space-y-0.5 text-amber-950 font-medium">
+                    <li>Es <strong>OBLIGATORIO</strong> utilizar un chip / número prepago dedicado exclusivo para la campaña política.</li>
+                    <li><strong>NUNCA</strong> asocie la línea personal del candidato ni la del jefe de campaña.</li>
+                    <li>Mantenga el volumen controlado para evitar bloqueos por parte de Meta.</li>
+                  </ul>
+                </div>
+              )}
+
+              {/* Credenciales Técnicas */}
+              {settings.provider !== 'simulation' && (
+                <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1 text-xs">
+                      API URL / Endpoint del Proveedor
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.api_url || ''}
+                      onChange={(e) => setSettings({ ...settings, api_url: e.target.value })}
+                      placeholder="https://graph.facebook.com/v19.0 o https://api.twilio.com"
+                      className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1 text-xs">
+                      API Token / Bearer Token / Secret
+                    </label>
+                    <input
+                      type="password"
+                      value={settings.api_token || ''}
+                      onChange={(e) => setSettings({ ...settings, api_token: e.target.value })}
+                      placeholder="Token secreto de autenticación"
+                      className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
+                    />
+                  </div>
+
+                  {settings.provider === 'twilio' && (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1 text-xs">
+                        Twilio Account SID
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.account_sid || ''}
+                        onChange={(e) => setSettings({ ...settings, account_sid: e.target.value })}
+                        placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
+                      />
+                    </div>
+                  )}
+
+                  {(settings.provider === 'meta_cloud' || settings.provider === 'twilio') && (
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1 text-xs">
+                        Número Remitente / Phone Number ID (E.164)
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.sender_phone || ''}
+                        onChange={(e) => setSettings({ ...settings, sender_phone: e.target.value })}
+                        placeholder="+14155238886 o Phone Number ID de Meta"
+                        className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN 5: RECORDATORIOS DE FONDO Y FRECUENCIA */}
+            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#38b6ff]" />
+                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
+                    5. Parámetros de Fondo y Resumen Diario
+                  </h4>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-xs">
+                    Hora de Resumen de Agenda Diaria (America/Bogota)
+                  </label>
+                  <input
+                    type="time"
+                    value={settings.daily_summary_time || '07:00'}
+                    onChange={(e) => setSettings({ ...settings, daily_summary_time: e.target.value })}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Hora en la que el cron emite la agenda matutina diaria a la comitiva.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-xs">
+                    Anticipación de Alerta de Salida (Minutos)
+                  </label>
+                  <input
+                    type="number"
+                    min="15"
+                    max="180"
+                    value={settings.reminder_minutes_before || 60}
+                    onChange={(e) => setSettings({ ...settings, reminder_minutes_before: Number(e.target.value) })}
+                    className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-white"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Tiempo previo para el recordatorio de salida del mismo día.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Botón de Guardar */}
+            <div className="pt-2 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Los cambios se aplican inmediatamente al motor de notificaciones en Render.
+              </span>
               <button
                 type="submit"
-                className="bg-[#38b6ff] hover:bg-[#20a7f5] text-slate-950 font-bold px-6 py-2.5 rounded-xl shadow-sm transition-transform hover:scale-105"
+                disabled={settingsSaving}
+                className="bg-[#38b6ff] hover:bg-[#20a7f5] text-slate-950 font-black px-6 py-3 rounded-xl shadow-md transition-transform hover:scale-105 disabled:opacity-50 flex items-center gap-2"
               >
-                Guardar Configuración
+                {settingsSaving ? (
+                  <div className="animate-spin w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full" />
+                ) : (
+                  <Check className="w-4 h-4 stroke-[3]" />
+                )}
+                <span>Guardar Configuración de WhatsApp</span>
               </button>
             </div>
 

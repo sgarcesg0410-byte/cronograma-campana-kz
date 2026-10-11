@@ -215,7 +215,9 @@ export const api = {
   },
 
   async getWhatsAppSettings(): Promise<WhatsAppSettings> {
-    const res = await fetch(`${API_BASE}/whatsapp/settings`);
+    const res = await fetch(`${API_BASE}/whatsapp/settings`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al obtener configuración');
     return data.settings;

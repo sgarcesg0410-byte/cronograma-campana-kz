@@ -129,16 +129,33 @@ export interface NotificationLog {
   sent_at: string;
 }
 
+export interface AuthorizedRecipient {
+  name: string;
+  phone: string;
+  role: CampaignRole;
+  active: boolean;
+}
+
 export interface WhatsAppSettings {
   id: number;
-  provider: 'simulation' | 'twilio' | 'evolution_api' | 'meta_cloud';
+  provider: 'assisted' | 'simulation' | 'twilio' | 'evolution_api' | 'meta_cloud';
   api_url?: string;
   api_token?: string;
   account_sid?: string;
   sender_phone?: string;
+  primary_phone?: string;
+  authorized_phones?: AuthorizedRecipient[];
+  notify_on_create?: number;
+  notify_on_update?: number;
+  notify_on_cancel?: number;
+  notify_on_reminders?: number;
+  quiet_hours_enabled?: number;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
   auto_reminders_enabled: number;
   reminder_minutes_before: number;
   daily_summary_time: string;
+  updated_at?: string;
 }
 
 export interface DashboardSummary {

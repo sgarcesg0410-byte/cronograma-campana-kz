@@ -22,7 +22,15 @@ import {
   enqueueActivityNotification,
   processNotificationQueue,
   cancelPendingActivityNotifications,
-  ALLOWED_NEED_CATEGORIES
+  ALLOWED_NEED_CATEGORIES,
+  calculateActivityRelevantChanges,
+  formatEventCreatedMessage,
+  formatEventUpdatedMessage,
+  formatEventCancelledMessage,
+  formatEventReminderMessage,
+  getNotificationRecipients,
+  scheduleAdvanceReminders,
+  getBogotaDateParts
 } from './whatsappService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -563,46 +571,40 @@ app.post('/api/activities', authenticateToken, requirePermission('activities:cre
 
     const newActivity = db.queryOne('SELECT * FROM activities WHERE id = ?', [result.lastInsertRowid]);
 
-    // Automatically enqueue notifications in resilient queue
+    // Automatic real-time notification workflow (post-commit)
     try {
-      const reminderMsg = formatActivityReminderMessage(newActivity);
-      const nowIso = new Date().toISOString();
-      const recipients = db.query(`
-        SELECT name, phone FROM contacts
-        WHERE active = 1 AND (name = ? OR (zone = ? AND category IN ('coordinador', 'lider_barrial', 'comitiva')))
-        UNION
-        SELECT name, phone FROM users
-        WHERE active = 1 AND (name = ? OR (zone = ? AND role IN ('coordinador', 'lider', 'candidato')))
-      `, [newActivity.responsible_name, newActivity.zone, newActivity.responsible_name, newActivity.zone]);
+      const settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+      const shouldNotifyCreate = !settings || settings.notify_on_create !== 0;
+      const shouldNotifyReminders = !settings || settings.notify_on_reminders !== 0;
 
-      for (const rec of recipients) {
-        if (rec.phone && validateE164Phone(rec.phone)) {
+      const recipients = getNotificationRecipients(newActivity);
+
+      if (shouldNotifyCreate && recipients.length > 0) {
+        const createdMsg = formatEventCreatedMessage(newActivity);
+        const nowIso = new Date().toISOString();
+
+        for (const rec of recipients) {
+          const dedupeKey = `event-created-${newActivity.id}-${rec.phone}`;
           enqueueActivityNotification({
             activityId: newActivity.id,
             recipientPhone: rec.phone,
             recipientName: rec.name,
-            notificationType: 'activity_created',
-            dedupeKey: `act_${newActivity.id}_created_${rec.phone}`,
+            notificationType: 'event_created',
+            dedupeKey,
             scheduledFor: nowIso,
-            messageText: reminderMsg,
+            messageText: createdMsg,
             requestId: req.requestId
           });
-
-          // Pre-schedule morning-of reminder if in the future
-          const eventMorningIso = `${newActivity.date}T07:00:00.000Z`;
-          if (eventMorningIso > nowIso) {
-            enqueueActivityNotification({
-              activityId: newActivity.id,
-              recipientPhone: rec.phone,
-              recipientName: rec.name,
-              notificationType: 'activity_reminder_morning',
-              dedupeKey: `act_${newActivity.id}_morning_${rec.phone}`,
-              scheduledFor: eventMorningIso,
-              messageText: reminderMsg,
-              requestId: req.requestId
-            });
-          }
         }
+
+        // Fast immediate dispatch in seconds (Render background worker will also ensure safety net)
+        setImmediate(() => {
+          processNotificationQueue().catch(err => console.error('[FAST DISPATCH CREATE ERROR]', err.message));
+        });
+      }
+
+      if (shouldNotifyReminders && recipients.length > 0) {
+        scheduleAdvanceReminders(newActivity, recipients, req.requestId);
       }
     } catch (queueErr) {
       console.error('[ACTIVITY QUEUE ERROR]', queueErr.message);
@@ -661,11 +663,83 @@ app.put('/api/activities/:id', authenticateToken, requirePermission('activities:
       });
     });
 
-    if (status === 'cancelado') {
-      cancelPendingActivityNotifications(req.params.id);
+    const updated = db.queryOne('SELECT * FROM activities WHERE id = ?', [req.params.id]);
+
+    // Real-Time Notification evaluation on updated activity
+    try {
+      const settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+      const recipients = getNotificationRecipients(updated);
+
+      // 1. Cancellation flow: if status changed to 'cancelado'
+      if (status === 'cancelado' && current.status !== 'cancelado') {
+        // Cancel all pending reminders in cascade
+        cancelPendingActivityNotifications(req.params.id);
+
+        if ((!settings || settings.notify_on_cancel !== 0) && recipients.length > 0) {
+          const cancelMsg = formatEventCancelledMessage(updated, notes || 'Cancelación de agenda por el equipo');
+          const nowIso = new Date().toISOString();
+
+          for (const rec of recipients) {
+            const dedupeKey = `event-cancelled-${updated.id}-${rec.phone}`;
+            enqueueActivityNotification({
+              activityId: updated.id,
+              recipientPhone: rec.phone,
+              recipientName: rec.name,
+              notificationType: 'event_cancelled',
+              dedupeKey,
+              scheduledFor: nowIso,
+              messageText: cancelMsg,
+              requestId: req.requestId
+            });
+          }
+
+          setImmediate(() => {
+            processNotificationQueue().catch(err => console.error('[FAST DISPATCH CANCEL ERROR]', err.message));
+          });
+        }
+      }
+      // 2. Active updates flow: calculate diff of relevant fields (ignoring internal notes/minor edits)
+      else if (status !== 'cancelado') {
+        const diff = calculateActivityRelevantChanges(current, updated);
+
+        if (diff.hasRelevantChanges) {
+          // If date or time changed, cancel old reminders and reschedule with new dates
+          const dateOrTimeChanged = current.date !== updated.date || current.start_time !== updated.start_time;
+          if (dateOrTimeChanged) {
+            cancelPendingActivityNotifications(req.params.id);
+            if (!settings || settings.notify_on_reminders !== 0) {
+              scheduleAdvanceReminders(updated, recipients, req.requestId);
+            }
+          }
+
+          if ((!settings || settings.notify_on_update !== 0) && recipients.length > 0) {
+            const updateMsg = formatEventUpdatedMessage(updated, diff.changesSummary);
+            const nowIso = new Date().toISOString();
+
+            for (const rec of recipients) {
+              const dedupeKey = `event-updated-${updated.id}-${diff.contentHash}-${rec.phone}`;
+              enqueueActivityNotification({
+                activityId: updated.id,
+                recipientPhone: rec.phone,
+                recipientName: rec.name,
+                notificationType: 'event_updated',
+                dedupeKey,
+                scheduledFor: nowIso,
+                messageText: updateMsg,
+                requestId: req.requestId
+              });
+            }
+
+            setImmediate(() => {
+              processNotificationQueue().catch(err => console.error('[FAST DISPATCH UPDATE ERROR]', err.message));
+            });
+          }
+        }
+      }
+    } catch (queueErr) {
+      console.error('[UPDATE QUEUE ERROR]', queueErr.message);
     }
 
-    const updated = db.queryOne('SELECT * FROM activities WHERE id = ?', [req.params.id]);
     res.json({ message: 'Actividad actualizada exitosamente', activity: updated });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -685,6 +759,37 @@ app.delete('/api/activities/:id', authenticateToken, requirePermission('activiti
       db.run('DELETE FROM activities WHERE id = ?', [req.params.id]);
       recordAudit(req, 'ACTIVITY_DELETED', 'activities', req.params.id, { title: current.title });
     });
+
+    // Send cancellation alert if enabled
+    try {
+      const settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+      if ((!settings || settings.notify_on_cancel !== 0)) {
+        const recipients = getNotificationRecipients(current);
+        if (recipients.length > 0) {
+          const cancelMsg = formatEventCancelledMessage(current, 'Actividad eliminada de la agenda oficial');
+          const nowIso = new Date().toISOString();
+
+          for (const rec of recipients) {
+            const dedupeKey = `event-deleted-${current.id}-${rec.phone}`;
+            enqueueActivityNotification({
+              activityId: current.id,
+              recipientPhone: rec.phone,
+              recipientName: rec.name,
+              notificationType: 'event_cancelled',
+              dedupeKey,
+              scheduledFor: nowIso,
+              messageText: cancelMsg,
+              requestId: req.requestId
+            });
+          }
+
+          setImmediate(() => {
+            processNotificationQueue().catch(err => console.error('[FAST DISPATCH DELETE ERROR]', err.message));
+          });
+        }
+      }
+    } catch (_) {}
+
     res.json({ message: 'Actividad eliminada con éxito.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -909,6 +1014,165 @@ app.post('/api/whatsapp/test-live', authenticateToken, requirePermission('whatsa
     });
   } catch (err) {
     res.status(500).json({ error: 'Error en la prueba de WhatsApp: ' + err.message });
+  }
+});
+
+// WhatsApp Settings (Admin & Coordinador)
+app.get('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
+  let settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+  if (!settings) {
+    db.run(`
+      INSERT INTO whatsapp_settings (id, provider, primary_phone, authorized_phones, notify_on_create, notify_on_update, notify_on_cancel, notify_on_reminders, quiet_hours_enabled, quiet_hours_start, quiet_hours_end)
+      VALUES (1, 'assisted', '+573001234567', '[]', 1, 1, 1, 1, 1, '22:00', '06:00')
+    `);
+    settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+  }
+
+  // Parse authorized_phones JSON for the client
+  let parsedAuth = [];
+  try {
+    parsedAuth = JSON.parse(settings.authorized_phones || '[]');
+  } catch (_) {
+    parsedAuth = [];
+  }
+
+  const safeSettings = {
+    ...settings,
+    authorized_phones: parsedAuth
+  };
+
+  res.json({ settings: safeSettings });
+});
+
+app.put('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
+  const {
+    provider,
+    api_url,
+    api_token,
+    account_sid,
+    sender_phone,
+    primary_phone,
+    authorized_phones,
+    notify_on_create = 1,
+    notify_on_update = 1,
+    notify_on_cancel = 1,
+    notify_on_reminders = 1,
+    quiet_hours_enabled = 1,
+    quiet_hours_start = '22:00',
+    quiet_hours_end = '06:00',
+    auto_reminders_enabled = 1,
+    reminder_minutes_before = 60,
+    daily_summary_time = '07:00'
+  } = req.body;
+
+  // 1. Validate primary phone if provided
+  if (primary_phone && !validateE164Phone(primary_phone)) {
+    return res.status(400).json({ error: 'El número de WhatsApp principal debe tener formato E.164 (Ej. +573001234567).' });
+  }
+
+  // 2. Validate authorized phones list
+  let cleanAuthList = [];
+  if (authorized_phones !== undefined) {
+    if (!Array.isArray(authorized_phones)) {
+      return res.status(400).json({ error: 'authorized_phones debe ser una lista de destinatarios.' });
+    }
+    if (authorized_phones.length > 20) {
+      return res.status(400).json({ error: 'Se permite un máximo de 20 destinatarios autorizados.' });
+    }
+
+    const seenPhones = new Set();
+    const allowedRoles = ['admin', 'candidato', 'coordinador', 'prensa', 'lider', 'avanzada'];
+
+    for (const item of authorized_phones) {
+      if (!item || typeof item !== 'object') continue;
+      const phone = (item.phone || '').trim();
+      const name = (item.name || '').trim();
+      const role = (item.role || 'coordinador').trim().toLowerCase();
+      const active = item.active !== false;
+
+      if (!name || name.length < 2) {
+        return res.status(400).json({ error: `Cada destinatario debe tener un nombre válido (mínimo 2 caracteres). Error en: "${name}"` });
+      }
+
+      if (!validateE164Phone(phone)) {
+        return res.status(400).json({ error: `Teléfono inválido para "${name}": ${phone}. Debe tener formato internacional (Ej. +573001234567).` });
+      }
+
+      if (seenPhones.has(phone)) {
+        return res.status(400).json({ error: `El número ${phone} está duplicado en la lista de destinatarios.` });
+      }
+      seenPhones.add(phone);
+
+      cleanAuthList.push({
+        name,
+        phone,
+        role: allowedRoles.includes(role) ? role : 'coordinador',
+        active
+      });
+    }
+  }
+
+  // 3. Validate quiet hours format (HH:MM)
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  if (quiet_hours_start && !timeRegex.test(quiet_hours_start)) {
+    return res.status(400).json({ error: 'quiet_hours_start debe tener formato HH:MM (Ej. 22:00).' });
+  }
+  if (quiet_hours_end && !timeRegex.test(quiet_hours_end)) {
+    return res.status(400).json({ error: 'quiet_hours_end debe tener formato HH:MM (Ej. 06:00).' });
+  }
+
+  const current = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1') || {};
+
+  try {
+    db.run(`
+      INSERT OR REPLACE INTO whatsapp_settings (
+        id, provider, api_url, api_token, account_sid, sender_phone,
+        primary_phone, authorized_phones, notify_on_create, notify_on_update,
+        notify_on_cancel, notify_on_reminders, quiet_hours_enabled, quiet_hours_start,
+        quiet_hours_end, auto_reminders_enabled, reminder_minutes_before, daily_summary_time,
+        updated_at
+      ) VALUES (
+        1, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        CURRENT_TIMESTAMP
+      )
+    `, [
+      provider || current.provider || 'assisted',
+      api_url !== undefined ? api_url : current.api_url,
+      api_token !== undefined ? api_token : current.api_token,
+      account_sid !== undefined ? account_sid : current.account_sid,
+      sender_phone !== undefined ? sender_phone : current.sender_phone,
+      primary_phone !== undefined ? primary_phone : current.primary_phone,
+      authorized_phones !== undefined ? JSON.stringify(cleanAuthList) : (current.authorized_phones || '[]'),
+      notify_on_create !== undefined ? (notify_on_create ? 1 : 0) : 1,
+      notify_on_update !== undefined ? (notify_on_update ? 1 : 0) : 1,
+      notify_on_cancel !== undefined ? (notify_on_cancel ? 1 : 0) : 1,
+      notify_on_reminders !== undefined ? (notify_on_reminders ? 1 : 0) : 1,
+      quiet_hours_enabled !== undefined ? (quiet_hours_enabled ? 1 : 0) : 1,
+      quiet_hours_start || '22:00',
+      quiet_hours_end || '06:00',
+      auto_reminders_enabled !== undefined ? (auto_reminders_enabled ? 1 : 0) : 1,
+      reminder_minutes_before || 60,
+      daily_summary_time || '07:00'
+    ]);
+
+    recordAudit(req, 'WHATSAPP_SETTINGS_UPDATED', 'whatsapp_settings', '1', {
+      provider: provider || current.provider,
+      recipientsCount: cleanAuthList.length,
+      quietHours: `${quiet_hours_start || '22:00'}-${quiet_hours_end || '06:00'}`
+    });
+
+    const updated = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+    const safeUpdated = {
+      ...updated,
+      authorized_phones: JSON.parse(updated.authorized_phones || '[]')
+    };
+
+    res.json({ message: 'Configuración de WhatsApp guardada exitosamente', settings: safeUpdated });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al guardar configuración: ' + err.message });
   }
 });
 
@@ -1374,30 +1638,27 @@ app.use((req, res) => {
 async function startServer() {
   await initDatabase();
 
-  // Background cron worker: Process resilient notification queue every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  // Background cron worker: Process resilient notification queue every 1 minute (Render Safety Net)
+  cron.schedule('* * * * *', async () => {
     try {
       const processed = await processNotificationQueue();
       if (processed > 0) {
-        console.log(`[CRON QUEUE] Despachadas ${processed} notificaciones de WhatsApp pendientes`);
+        console.log(`[CRON WORKER] Despachadas ${processed} notificaciones de WhatsApp pendientes`);
       }
     } catch (err) {
-      console.error('[CRON QUEUE ERROR]', err.message);
+      console.error('[CRON WORKER ERROR]', err.message);
     }
   });
 
-  // Daily agenda broadcast worker at 07:00 AM
+  // Daily agenda broadcast worker at 07:00 AM America/Bogota
   cron.schedule('0 7 * * *', async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const todayActivities = db.query("SELECT * FROM activities WHERE date = ? AND status != 'cancelado' ORDER BY start_time ASC", [today]);
+      const { dateStr: todayBogota } = getBogotaDateParts();
+      const todayActivities = db.query("SELECT * FROM activities WHERE date = ? AND status != 'cancelado' ORDER BY start_time ASC", [todayBogota]);
       if (todayActivities.length > 0) {
-        const message = formatDailyAgendaMessage(today, todayActivities);
-        const recipients = db.query(`
-          SELECT name, phone FROM contacts WHERE active = 1 AND phone IS NOT NULL AND phone != ''
-          UNION
-          SELECT name, phone FROM users WHERE active = 1 AND phone IS NOT NULL AND phone != ''
-        `);
+        const message = formatDailyAgendaMessage(todayBogota, todayActivities);
+        const recipients = getNotificationRecipients(null);
+
         for (const r of recipients) {
           if (validateE164Phone(r.phone)) {
             enqueueActivityNotification({
@@ -1405,7 +1666,7 @@ async function startServer() {
               recipientPhone: r.phone,
               recipientName: r.name,
               notificationType: 'daily_agenda',
-              dedupeKey: `agenda_${today}_${r.phone}`,
+              dedupeKey: `agenda_${todayBogota}_${r.phone}`,
               scheduledFor: new Date().toISOString(),
               messageText: message
             });
@@ -1414,9 +1675,9 @@ async function startServer() {
         await processNotificationQueue();
       }
     } catch (cronErr) {
-      console.error('[DAILY AGONDA CRON ERROR]', cronErr.message);
+      console.error('[DAILY AGENDA CRON ERROR]', cronErr.message);
     }
-  });
+  }, { timezone: 'America/Bogota' });
 
   app.listen(PORT, () => {
     console.log(`\n======================================================`);

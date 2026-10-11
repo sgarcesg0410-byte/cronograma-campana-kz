@@ -106,6 +106,7 @@ export function createDatabaseBackup(reason = 'manual', userIdentifier = 'system
       contacts: db.query('SELECT * FROM contacts'),
       community_needs: (function() { try { return db.query('SELECT * FROM community_needs'); } catch(_) { return []; } })(),
       notification_queue: (function() { try { return db.query('SELECT * FROM notification_queue'); } catch(_) { return []; } })(),
+      whatsapp_settings: (function() { try { return db.query('SELECT * FROM whatsapp_settings'); } catch(_) { return []; } })(),
       audit_logs: db.query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500')
     }
   };
@@ -223,6 +224,15 @@ export async function initDatabase() {
       api_token TEXT,
       account_sid TEXT,
       sender_phone TEXT,
+      primary_phone TEXT,
+      authorized_phones TEXT DEFAULT '[]',
+      notify_on_create INTEGER DEFAULT 1,
+      notify_on_update INTEGER DEFAULT 1,
+      notify_on_cancel INTEGER DEFAULT 1,
+      notify_on_reminders INTEGER DEFAULT 1,
+      quiet_hours_enabled INTEGER DEFAULT 1,
+      quiet_hours_start TEXT DEFAULT '22:00',
+      quiet_hours_end TEXT DEFAULT '06:00',
       auto_reminders_enabled INTEGER DEFAULT 1,
       reminder_minutes_before INTEGER DEFAULT 60,
       daily_summary_time TEXT DEFAULT '07:00',
@@ -357,6 +367,19 @@ function runMigrations() {
     try { db.exec("ALTER TABLE notifications_log ADD COLUMN provider TEXT DEFAULT 'assisted';"); } catch (_) {}
     try { db.exec("ALTER TABLE notifications_log ADD COLUMN provider_message_id TEXT;"); } catch (_) {}
     try { db.exec("ALTER TABLE notifications_log ADD COLUMN error_message TEXT;"); } catch (_) {}
+  } catch (e) {}
+
+  // Ensure whatsapp_settings has new recipient and quiet hours columns
+  try {
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN primary_phone TEXT;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN authorized_phones TEXT DEFAULT '[]';"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN notify_on_create INTEGER DEFAULT 1;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN notify_on_update INTEGER DEFAULT 1;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN notify_on_cancel INTEGER DEFAULT 1;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN notify_on_reminders INTEGER DEFAULT 1;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN quiet_hours_enabled INTEGER DEFAULT 1;"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN quiet_hours_start TEXT DEFAULT '22:00';"); } catch (_) {}
+    try { db.exec("ALTER TABLE whatsapp_settings ADD COLUMN quiet_hours_end TEXT DEFAULT '06:00';"); } catch (_) {}
   } catch (e) {}
 }
 
