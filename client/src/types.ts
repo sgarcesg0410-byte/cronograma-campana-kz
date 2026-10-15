@@ -138,7 +138,8 @@ export interface AuthorizedRecipient {
 
 export interface WhatsAppSettings {
   id: number;
-  provider: 'assisted' | 'simulation' | 'twilio' | 'evolution_api' | 'meta_cloud';
+  provider: 'assisted' | 'simulation' | 'twilio' | 'evolution_api' | 'meta_cloud' | 'baileys_qr';
+
   api_url?: string;
   api_token?: string;
   account_sid?: string;
@@ -293,4 +294,17 @@ export interface NotificationQueueStats {
   cancelled: number;
   total: number;
 }
+
+export interface BaileysStatus {
+  status: 'disconnected' | 'connecting' | 'qr_ready' | 'connected';
+  connected?: boolean;
+  qrCodeDataUrl?: string | null;
+  connectedPhone?: string | null;
+  phone?: string | null;
+  connectedName?: string | null;
+  name?: string | null;
+  lastConnectedAt?: string | null;
+  hasExistingSession: boolean;
+}
+
 

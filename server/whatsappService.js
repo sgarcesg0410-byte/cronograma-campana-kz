@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { db } from './db.js';
+import { baileysManager } from './baileysService.js';
 
 // Constant-time signature verification for Meta and QR Webhooks (OWASP compliance)
 export function validateWebhookSignature(rawBody, signatureHeader, secret) {
@@ -636,6 +637,13 @@ class EvolutionApiProvider {
   }
 }
 
+// Native Baileys QR Provider (Runs directly in Serv00 / Node.js)
+class BaileysProvider {
+  async sendTextMessage({ to, text }) {
+    return await baileysManager.sendMessage({ to, text });
+  }
+}
+
 // Provider factory with DB settings integration
 export function getWhatsAppProvider(providerName = null) {
   let dbSettings = null;
@@ -644,6 +652,11 @@ export function getWhatsAppProvider(providerName = null) {
   } catch (_) {}
 
   const selected = providerName || dbSettings?.provider || process.env.WA_PROVIDER || 'assisted';
+  
+  if (selected === 'baileys_qr') {
+    return new BaileysProvider();
+  }
+
   if (selected === 'meta_cloud') {
     return new MetaCloudProvider({
       token: dbSettings?.api_token || process.env.META_WA_TOKEN,
@@ -658,6 +671,11 @@ export function getWhatsAppProvider(providerName = null) {
     });
   }
   if (selected === 'evolution_api') {
+    // Si la sesión nativa Baileys está conectada, usarla preferentemente
+    const bStatus = baileysManager.getStatus();
+    if (bStatus.status === 'connected') {
+      return new BaileysProvider();
+    }
     return new EvolutionApiProvider({
       apiUrl: dbSettings?.api_url || process.env.EVOLUTION_API_URL,
       apiKey: dbSettings?.api_token || process.env.EVOLUTION_API_KEY,
@@ -1193,4 +1211,7 @@ export function cancelPendingActivityNotifications(activityId) {
     return 0;
   }
 }
+
+export { baileysManager };
+
 

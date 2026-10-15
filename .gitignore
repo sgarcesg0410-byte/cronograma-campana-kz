@@ -6,5 +6,7 @@ cloudflared.exe
 *.sqlite
 *.sqlite.tmp.*
 server/backups/
+*whatsapp_session*
 .DS_Store
 Thumbs.db
+

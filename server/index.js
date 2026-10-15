@@ -31,8 +31,10 @@ import {
   formatEventReminderMessage,
   getNotificationRecipients,
   scheduleAdvanceReminders,
-  getBogotaDateParts
+  getBogotaDateParts,
+  baileysManager
 } from './whatsappService.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1399,8 +1401,46 @@ app.put('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp
   }
 });
 
+// ==========================================
+// Baileys WhatsApp QR Endpoints (Serv00 / Local / Direct)
+// ==========================================
+app.get('/api/whatsapp/baileys/status', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
+  res.json({
+    success: true,
+    data: baileysManager.getStatus()
+  });
+});
+
+app.post('/api/whatsapp/baileys/connect', authenticateToken, requirePermission('whatsapp:settings'), async (req, res) => {
+  try {
+    const status = await baileysManager.connect();
+    res.json({
+      success: true,
+      message: 'Proceso de conexión iniciado. Si no está conectado, escanee el código QR.',
+      data: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al conectar WhatsApp QR: ' + err.message });
+  }
+});
+
+app.post('/api/whatsapp/baileys/disconnect', authenticateToken, requirePermission('whatsapp:settings'), async (req, res) => {
+  try {
+    const status = await baileysManager.clearSession();
+    recordAudit(req, 'WHATSAPP_QR_DISCONNECTED', 'whatsapp_session', '1', {});
+    res.json({
+      success: true,
+      message: 'Sesión de WhatsApp desconectada exitosamente.',
+      data: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al desconectar WhatsApp QR: ' + err.message });
+  }
+});
+
 // Notifications history log
 app.get('/api/whatsapp/logs', authenticateToken, requirePermission('reports:read'), (req, res) => {
+
   const logs = db.query(`
     SELECT n.id, n.recipient_phone, n.recipient_name, n.channel, n.provider, n.status, n.message_text, n.sent_at, a.title as activity_title 
     FROM notifications_log n 
@@ -1916,7 +1956,44 @@ async function startServer() {
     }
   });
 
+  // Set incoming citizen need callback for native Baileys WhatsApp bot
+  baileysManager.setIncomingNeedCallback(async ({ senderPhone, messageText, messageId }) => {
+    const parseResult = parseCommunityNeedMessage(messageText);
+    if (!parseResult.valid) {
+      return formatNeedParseError(parseResult.missingFields);
+    }
+
+    const { data } = parseResult;
+    try {
+      const res = db.run(`
+        INSERT INTO community_needs (
+          reporter_user_id, neighborhood, person_name, phone, category,
+          description, priority, status, source, is_demo, raw_payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente', 'whatsapp', 0, ?)
+      `, [
+        null,
+        data.neighborhood,
+        data.person_name,
+        data.phone,
+        data.category,
+        data.description,
+        data.priority,
+        JSON.stringify({ raw_text: messageText, sender: senderPhone, messageId, provider: 'baileys_qr' })
+      ]);
+
+      const needRecord = { id: res.lastInsertRowid, ...data };
+      return formatNeedRegisteredConfirmation(needRecord);
+    } catch (err) {
+      console.error('[BAILEYS NEED INSERT ERROR]', err.message);
+      return '⚠️ Hubo un error al registrar la solicitud en el sistema. Por favor reintente más tarde.';
+    }
+  });
+
+  // Auto-reconnect native WhatsApp QR session if existing credentials are found
+  baileysManager.init(true).catch(e => console.warn('[BAILEYS AUTOINIT NOTICE]', e.message));
+
   app.listen(PORT, () => {
+
     console.log(`\n======================================================`);
     console.log(`  🚀 SERVIDOR DE PRODUCCIÓN #VOY CON EL KZ ACTIVO`);
     console.log(`  📍 App Web + Backend URL: http://localhost:${PORT}`);

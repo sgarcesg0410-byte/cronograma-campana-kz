@@ -16,8 +16,10 @@ import {
   User, 
   UserCreatePayload,
   UserUpdatePayload,
-  WhatsAppSettings 
+  WhatsAppSettings,
+  BaileysStatus
 } from '../types';
+
 
 const API_BASE = '/api';
 
@@ -447,5 +449,36 @@ export const api = {
     if (!res.ok) throw new Error(data.error || 'Error al reintentar notificaciones');
     return data;
   },
+
+  // Native Baileys WhatsApp QR Connection (Serv00 / Local / VPS)
+  async getBaileysStatus(): Promise<BaileysStatus> {
+    const res = await fetch(`${API_BASE}/whatsapp/baileys/status`, {
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al consultar estado de WhatsApp QR');
+    return data.data;
+  },
+
+  async connectBaileys(): Promise<{ message: string; data: BaileysStatus }> {
+    const res = await fetch(`${API_BASE}/whatsapp/baileys/connect`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al iniciar conexión de WhatsApp QR');
+    return data;
+  },
+
+  async disconnectBaileys(): Promise<{ message: string; data: BaileysStatus }> {
+    const res = await fetch(`${API_BASE}/whatsapp/baileys/disconnect`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al desconectar WhatsApp QR');
+    return data;
+  },
 };
+
 

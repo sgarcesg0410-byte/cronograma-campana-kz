@@ -6,3 +6,4 @@ client/node_modules
 cloudflared.exe
 *.db-journal
 test*
+*whatsapp_session*

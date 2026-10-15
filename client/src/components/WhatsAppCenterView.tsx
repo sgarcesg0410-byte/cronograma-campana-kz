@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, AuthorizedRecipient, CampaignRole, Contact, NotificationLog, WhatsAppSettings, TestLiveWhatsAppResponse } from '../types';
+import { Activity, AuthorizedRecipient, CampaignRole, Contact, NotificationLog, WhatsAppSettings, TestLiveWhatsAppResponse, BaileysStatus } from '../types';
 import { api } from '../services/api';
 import { 
   MessageSquare, 
@@ -27,8 +27,12 @@ import {
   Moon,
   Bell,
   BellOff,
-  AlertTriangle
+  AlertTriangle,
+  QrCode,
+  RefreshCw,
+  Power
 } from 'lucide-react';
+
 
 const CAMPAIGN_ROLE_LABELS: Record<CampaignRole, string> = {
   admin: 'Administrador General',
@@ -118,10 +122,57 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
     fetchPreview();
   }, [messageType, targetActivityId, selectedDate, selectedContactPhone, customPhone]);
 
+  // Native Baileys QR States
+  const [baileysStatus, setBaileysStatus] = useState<BaileysStatus | null>(null);
+  const [baileysLoading, setBaileysLoading] = useState<boolean>(false);
+  const [baileysError, setBaileysError] = useState<string | null>(null);
+
+  const loadBaileysStatus = async () => {
+    try {
+      const status = await api.getBaileysStatus();
+      setBaileysStatus(status);
+    } catch (_) {}
+  };
+
+  const handleConnectBaileys = async () => {
+    setBaileysLoading(true);
+    setBaileysError(null);
+    try {
+      const res = await api.connectBaileys();
+      setBaileysStatus(res.data);
+    } catch (err: any) {
+      setBaileysError(err.message || 'Error al conectar QR');
+    } finally {
+      setBaileysLoading(false);
+    }
+  };
+
+  const handleDisconnectBaileys = async () => {
+    if (!confirm('¿Seguro que deseas desconectar y cerrar la sesión de WhatsApp en el servidor?')) return;
+    setBaileysLoading(true);
+    setBaileysError(null);
+    try {
+      const res = await api.disconnectBaileys();
+      setBaileysStatus(res.data);
+    } catch (err: any) {
+      setBaileysError(err.message || 'Error al desconectar');
+    } finally {
+      setBaileysLoading(false);
+    }
+  };
+
   // Load settings & logs
   useEffect(() => {
     loadSettingsAndLogs();
+    if (activeTab === 'settings') {
+      loadBaileysStatus();
+      const interval = setInterval(() => {
+        loadBaileysStatus();
+      }, 3500);
+      return () => clearInterval(interval);
+    }
   }, [activeTab]);
+
 
   const loadSettingsAndLogs = async () => {
     try {
@@ -1133,14 +1184,168 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
                   onChange={(e) => setSettings({ ...settings, provider: e.target.value as any })}
                   className="w-full border border-slate-300 rounded-xl p-2.5 bg-white text-slate-900 text-xs sm:text-sm font-medium focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
                 >
+                  <option value="baileys_qr">📱 WhatsApp Nativo por Código QR (Serv00 / Local - Sin API de Pago)</option>
                   <option value="simulation">Simulador Activo de Campaña (Recomendado sin costo / Pruebas)</option>
                   <option value="meta_cloud">Meta WhatsApp Cloud API (Oficial para Producción)</option>
                   <option value="twilio">Twilio WhatsApp Business API (Oficial)</option>
-                  <option value="evolution_api">Evolution API / Baileys (Bot WhatsApp por QR - Línea Dedicada)</option>
+                  <option value="evolution_api">Evolution API (Servidor Externo Docker)</option>
                 </select>
               </div>
 
-              {/* Advertencia Crítica para Bot Conectado por QR */}
+              {/* PANEL DE CONTROL VINCULACIÓN DIRECTA POR CÓDIGO QR (BAILEYS) */}
+              {settings.provider === 'baileys_qr' && (
+                <div className="p-5 bg-white rounded-2xl border-2 border-emerald-200 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                        <QrCode className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-slate-900 font-heading text-sm">
+                          Vinculación Nativa por Código QR (Serv00 / Servidor)
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Conecta la línea real de WhatsApp de la campaña sin costos de API ni servidores intermedios.
+                        </p>
+                      </div>
+                    </div>
+
+                    {baileysStatus && (
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                        baileysStatus.connected 
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                          : baileysStatus.status === 'qr_ready'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                          : 'bg-slate-100 text-slate-700 border border-slate-300'
+                      }`}>
+                        <span className={`w-2 h-2 rounded-full ${
+                          baileysStatus.connected ? 'bg-emerald-500' : baileysStatus.status === 'qr_ready' ? 'bg-amber-500 animate-ping' : 'bg-slate-400'
+                        }`} />
+                        {baileysStatus.connected 
+                          ? 'Conectado y Operativo' 
+                          : baileysStatus.status === 'qr_ready' 
+                          ? 'Esperando Escaneo QR' 
+                          : baileysStatus.status === 'connecting'
+                          ? 'Iniciando...'
+                          : 'Desconectado'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Alerta de Error si ocurre */}
+                  {baileysError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{baileysError}</span>
+                    </div>
+                  )}
+
+                  {/* Estado 1: CONECTADO */}
+                  {baileysStatus?.connected ? (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                            <span className="font-bold text-slate-900 text-sm">
+                              WhatsApp Vinculado Exitosamente
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600">
+                            Línea activa: <strong className="text-slate-900 font-mono text-sm">{baileysStatus.phone || 'Desconocido'}</strong> ({baileysStatus.name || 'Campaña'})
+                          </p>
+                          {baileysStatus.lastConnectedAt && (
+                            <p className="text-[11px] text-slate-500">
+                              Última conexión: {new Date(baileysStatus.lastConnectedAt).toLocaleString('es-CO')}
+                            </p>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleDisconnectBaileys}
+                          disabled={baileysLoading}
+                          className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors flex items-center gap-1.5 self-start sm:self-center"
+                        >
+                          <Power className="w-4 h-4" />
+                          <span>Desvincular y Cerrar Sesión</span>
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] text-emerald-800 bg-white/80 p-2.5 rounded-lg border border-emerald-100">
+                        💡 Todas las notificaciones del cronograma (7d / 3d / 1d / salida) y la recepción comunitaria de necesidades por WhatsApp se enviarán y responderán desde este número.
+                      </div>
+                    </div>
+                  ) : baileysStatus?.qrCodeDataUrl ? (
+                    /* Estado 2: QR LISTO PARA ESCANEAR */
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-slate-50 rounded-xl border border-slate-200 items-center">
+                      <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl shadow-inner border border-slate-200">
+                        <img
+                          src={baileysStatus.qrCodeDataUrl}
+                          alt="Código QR de WhatsApp"
+                          className="w-56 h-56 object-contain rounded-lg"
+                        />
+                        <div className="mt-3 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleConnectBaileys}
+                            disabled={baileysLoading}
+                            className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${baileysLoading ? 'animate-spin' : ''}`} />
+                            <span>Regenerar Código</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <h5 className="font-black text-slate-900 text-xs uppercase tracking-wider font-heading">
+                          Instrucciones para Vincular el Celular de la Campaña:
+                        </h5>
+                        <ol className="text-xs text-slate-700 space-y-2 list-decimal list-inside font-medium leading-relaxed">
+                          <li>Abre <strong>WhatsApp</strong> en el teléfono móvil destinado a la campaña.</li>
+                          <li>Toca <strong>Menú (⋮)</strong> en Android o <strong>Ajustes (⚙️)</strong> en iPhone.</li>
+                          <li>Selecciona <strong>Dispositivos vinculados</strong> y luego <strong>Vincular un dispositivo</strong>.</li>
+                          <li>Apunta la cámara del celular hacia este código QR para sincronizarlo.</li>
+                        </ol>
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-snug">
+                          ⚠️ <strong>Recomendación Operativa:</strong> Usa una línea móvil dedicada para la campaña para preservar la privacidad de los líderes y del candidato.
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Estado 3: DESCONECTADO / ESPERANDO INICIO */
+                    <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-3">
+                      <div className="w-12 h-12 bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center justify-center mx-auto text-slate-600">
+                        <Smartphone className="w-6 h-6 text-[#38b6ff]" />
+                      </div>
+                      <div>
+                        <h5 className="font-bold text-slate-900 text-sm">
+                          WhatsApp no está vinculado en este momento
+                        </h5>
+                        <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                          Genera un código QR para escanearlo con el teléfono de campaña. La sesión se guardará persistentemente en el servidor.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleConnectBaileys}
+                        disabled={baileysLoading}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-md text-xs transition inline-flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {baileysLoading ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <QrCode className="w-4 h-4" />
+                        )}
+                        <span>{baileysLoading ? 'Generando Código QR...' : 'Generar Código QR de Vinculación'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Advertencia Crítica para Bot Conectado por QR Externo */}
               {settings.provider === 'evolution_api' && (
                 <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl text-xs space-y-2 text-amber-950">
                   <div className="flex items-center gap-2 font-bold text-amber-900">
@@ -1159,7 +1364,7 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
               )}
 
               {/* Credenciales Técnicas */}
-              {settings.provider !== 'simulation' && (
+              {settings.provider !== 'simulation' && settings.provider !== 'baileys_qr' && (
                 <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
                   <div>
                     <label className="font-bold text-slate-700 block mb-1 text-xs">
