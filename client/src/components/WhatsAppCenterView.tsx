@@ -388,27 +388,49 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white'
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeTab === 'settings' ? 'bg-amber-400 text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white bg-slate-700/50'
             }`}
-            title="Configuración de Proveedor"
+            title="Configuración de Proveedor y Vinculación QR"
           >
             <Settings className="w-3.5 h-3.5" />
+            <span>Configuración & QR</span>
           </button>
         </div>
       </div>
 
       {/* TAB 1: 1-CLIC DIRECT (WHATSAPP WEB / MOBILE) */}
       {activeTab === 'direct' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* Left: Message Generator Controls */}
-          <div className="lg:col-span-5 space-y-4">
-            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <h3 className="text-sm font-black text-slate-900 font-heading flex items-center gap-2">
-                <Share2 className="w-4 h-4 text-emerald-600" />
-                Configurar Mensaje para WhatsApp
-              </h3>
+        <div className="space-y-4">
+          {/* Banner de acceso directo a Código QR */}
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl shrink-0">
+                <QrCode className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="font-bold text-slate-900 block text-sm">¿Deseas vincular la línea de WhatsApp de la campaña con Código QR?</span>
+                <span className="text-slate-600 text-xs">Conecta el celular oficial para que el sistema despache alertas y reciba necesidades ciudadanas sin costo.</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition shadow-sm whitespace-nowrap self-start sm:self-center flex items-center gap-1.5"
+            >
+              <span>Vincular por Código QR</span>
+              <span>➡️</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left: Message Generator Controls */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <h3 className="text-sm font-black text-slate-900 font-heading flex items-center gap-2">
+                  <Share2 className="w-4 h-4 text-emerald-600" />
+                  Configurar Mensaje para WhatsApp
+                </h3>
 
               {/* Message Type */}
               <div>
@@ -584,13 +606,40 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
 
             </div>
           </div>
-
         </div>
+      </div>
       )}
 
       {/* TAB 2: AUTOMATED GATEWAY & BROADCAST */}
       {activeTab === 'automated' && (
         <div className="space-y-6">
+          {/* Quick QR Setup Notice */}
+          <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-800 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                <QrCode className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-white">Línea de Salida de WhatsApp Oficial</h4>
+                <p className="text-xs text-slate-400">
+                  Proveedor: <strong className="text-[#38b6ff] uppercase">{settings?.provider || 'Sin configurar'}</strong>
+                  {baileysStatus?.connected ? (
+                    <span className="text-emerald-400 ml-2 font-bold">● Conectado ({baileysStatus.phone})</span>
+                  ) : (
+                    <span className="text-amber-400 ml-2 font-medium">● Sin vincular por QR</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 self-start sm:self-center transition shadow-sm"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span>{baileysStatus?.connected ? 'Administrar Conexión QR' : 'Vincular por Código QR'}</span>
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* Broadcast Daily to All Card */}
