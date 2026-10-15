@@ -1,35 +1,26 @@
 # ==========================================
-# Multi-stage Dockerfile para Campaña #VOY CON EL KZ
+# Dockerfile para Campaña #VOY CON EL KZ
 # ==========================================
-
-# Etapa 1: Compilar Frontend (React + Vite + Tailwind)
-FROM node:22-alpine AS client-builder
-WORKDIR /app/client
-
-COPY client/package*.json ./
-RUN npm install
-
-COPY client/ ./
-RUN npm run build
-
-# Etapa 2: Servidor Backend de Producción
-FROM node:22-alpine AS runner
+# Imagen base ligera Debian (evita incompatibilidades de musl con Tailwind/Oxide en Alpine)
+FROM node:22-slim
 WORKDIR /app
 
-# Instalar dependencias de producción
+# Instalar dependencias de producción del backend
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# Copiar código del servidor y cliente compilado
+# Copiar código del servidor backend
 COPY server/ ./server/
-COPY --from=client-builder /app/client/dist ./client/dist
 
-# Variables de entorno por defecto (JWT_SECRET debe proveerse al desplegar el contenedor)
+# Copiar cliente web compilado
+COPY client/dist/ ./client/dist/
+
+# Variables de entorno
 ENV NODE_ENV=production
 ENV PORT=5000
 
-# Puerto expuesto
+# Puerto expuesto por el contenedor
 EXPOSE 5000
 
-# Comando de inicio
+# Comando de inicio del servidor
 CMD ["node", "server/index.js"]
