@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Activity } from '../types';
 import { CATEGORY_CONFIG, STATUS_CONFIG } from './DailyAgendaView';
-import { Printer, Calendar, Clock, MapPin, Users, Package } from 'lucide-react';
+import { Printer, Calendar, Clock, MapPin, Users, Package, CalendarRange } from 'lucide-react';
+import { formatTitleDate, formatBogotaTimestamp } from '../utils/date';
 
 interface PrintReportViewProps {
   activities: Activity[];
@@ -12,17 +13,44 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
   activities,
   selectedDate,
 }) => {
-  const dayActivities = activities.filter((a) => a.date === selectedDate);
+  const [printMode, setPrintMode] = useState<'day' | 'week'>('day');
 
-  const formatTitleDate = (dateStr: string) => {
-    const d = new Date(dateStr + 'T00:00:00');
-    return new Intl.DateTimeFormat('es-ES', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    }).format(d);
+  // Compute week range based on selectedDate (Monday to Sunday)
+  const getWeekRange = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const d = new Date(year, month - 1, day);
+    const dayOfWeek = d.getDay();
+    const distanceToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(year, month - 1, day + distanceToMonday);
+    const sunday = new Date(year, month - 1, day + distanceToMonday + 6);
+    
+    const toStr = (date: Date) => 
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+    const monthNameMonday = new Intl.DateTimeFormat('es-CO', { month: 'short' }).format(monday);
+    const monthNameSunday = new Intl.DateTimeFormat('es-CO', { month: 'long', year: 'numeric' }).format(sunday);
+
+    return {
+      startStr: toStr(monday),
+      endStr: toStr(sunday),
+      label: `${monday.getDate()} de ${monthNameMonday} al ${sunday.getDate()} de ${monthNameSunday}`
+    };
   };
+
+  const weekRange = getWeekRange(selectedDate);
+
+  const displayedActivities = activities
+    .filter((a) => {
+      if (printMode === 'day') {
+        return a.date === selectedDate;
+      } else {
+        return a.date >= weekRange.startStr && a.date <= weekRange.endStr;
+      }
+    })
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.start_time.localeCompare(b.start_time);
+    });
 
   const handlePrint = () => {
     window.print();
@@ -38,21 +66,48 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
             Ficha de Ruta Oficial e Imprimible (PDF)
           </h2>
           <p className="text-xs text-slate-500">
-            Documento de control diario para equipo de seguridad, avanzada, transporte y candidato.
+            Documento de control para equipo de seguridad, avanzada, transporte y candidato.
           </p>
         </div>
 
-        <button
-          onClick={handlePrint}
-          className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all hover:scale-105"
-        >
-          <Printer className="w-4 h-4 text-[#38b6ff]" />
-          <span>Imprimir / Guardar en PDF</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Mode selector */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+            <button
+              onClick={() => setPrintMode('day')}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                printMode === 'day'
+                  ? 'bg-white text-slate-900 shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Día Actual
+            </button>
+            <button
+              onClick={() => setPrintMode('week')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                printMode === 'week'
+                  ? 'bg-white text-slate-900 shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <CalendarRange className="w-3.5 h-3.5 text-[#148ad6]" />
+              <span>Semana Completa</span>
+            </button>
+          </div>
+
+          <button
+            onClick={handlePrint}
+            className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all hover:scale-105"
+          >
+            <Printer className="w-4 h-4 text-[#38b6ff]" />
+            <span>Imprimir / Guardar en PDF</span>
+          </button>
+        </div>
       </div>
 
-      {/* Printable Sheet Container */}
-      <div className="bg-white p-6 sm:p-10 rounded-2xl border border-slate-200 shadow-sm print:border-none print:shadow-none print:p-0 max-w-5xl mx-auto">
+      {/* Printable Sheet Container - Isolated by #print-sheet in print mode */}
+      <div id="print-sheet" className="bg-white p-6 sm:p-10 rounded-2xl border border-slate-200 shadow-sm max-w-5xl mx-auto">
         
         {/* Header with Official Logo & Campaign details */}
         <div className="border-b-2 border-slate-900 pb-4 mb-6 flex items-center justify-between">
@@ -77,13 +132,15 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
 
           <div className="text-right">
             <div className="inline-block bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-right">
-              <span className="text-[10px] font-bold text-slate-500 block uppercase">FECHA OFICIAL</span>
+              <span className="text-[10px] font-bold text-slate-500 block uppercase">
+                {printMode === 'day' ? 'FECHA OFICIAL' : 'SEMANA OFICIAL'}
+              </span>
               <span className="text-sm font-black text-slate-900 capitalize font-heading">
-                {formatTitleDate(selectedDate)}
+                {printMode === 'day' ? formatTitleDate(selectedDate) : weekRange.label}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 font-mono mt-1">
-              Impreso: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}
+              Impreso: {formatBogotaTimestamp()}
             </p>
           </div>
         </div>
@@ -93,6 +150,9 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
           <table className="w-full text-left border-collapse border border-slate-300 text-xs">
             <thead>
               <tr className="bg-slate-100 text-slate-900 font-heading font-black border-b border-slate-300">
+                {printMode === 'week' && (
+                  <th className="p-2.5 border-r border-slate-300 w-24 text-center">FECHA</th>
+                )}
                 <th className="p-2.5 border-r border-slate-300 w-24 text-center">HORA</th>
                 <th className="p-2.5 border-r border-slate-300">ACTIVIDAD / PROPÓSITO</th>
                 <th className="p-2.5 border-r border-slate-300 w-32">TIPO</th>
@@ -102,19 +162,28 @@ export const PrintReportView: React.FC<PrintReportViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {dayActivities.length === 0 ? (
+              {displayedActivities.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-slate-500 font-medium">
-                    No hay actividades registradas en el cronograma para esta fecha.
+                  <td colSpan={printMode === 'week' ? 7 : 6} className="p-6 text-center text-slate-500 font-medium">
+                    No hay actividades registradas en el cronograma para {printMode === 'day' ? 'esta fecha' : 'esta semana'}.
                   </td>
                 </tr>
               ) : (
-                dayActivities.map((act) => {
+                displayedActivities.map((act) => {
                   const cat = CATEGORY_CONFIG[act.category] || CATEGORY_CONFIG.otro;
                   const status = STATUS_CONFIG[act.status] || STATUS_CONFIG.programado;
 
                   return (
                     <tr key={act.id} className="hover:bg-slate-50">
+                      {printMode === 'week' && (
+                        <td className="p-2 border-r border-slate-300 text-center font-bold text-slate-800 whitespace-nowrap bg-slate-50/50">
+                          {act.date.substring(5)}
+                          <span className="block text-[10px] text-slate-500 font-normal">
+                            {new Intl.DateTimeFormat('es-CO', { weekday: 'short' }).format(new Date(act.date + 'T12:00:00'))}
+                          </span>
+                        </td>
+                      )}
+
                       <td className="p-2.5 border-r border-slate-300 text-center font-mono font-bold whitespace-nowrap bg-slate-50/50">
                         {act.start_time}
                         {act.end_time && <span className="block text-[10px] text-slate-500">{act.end_time}</span>}

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Activity, ActivityCategory, ActivityStatus, User, PurgeDemoResult } from '../types';
 import { api } from '../services/api';
+import { getBogotaDateStr, addDaysToDateStr, formatTitleDate } from '../utils/date';
 import { 
   Calendar, 
   Clock, 
@@ -114,30 +115,17 @@ export const DailyAgendaView: React.FC<DailyAgendaViewProps> = ({
 
   // Date navigation helpers
   const handlePrevDay = () => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() - 1);
-    onDateChange(d.toISOString().split('T')[0]);
+    onDateChange(addDaysToDateStr(selectedDate, -1));
   };
 
   const handleNextDay = () => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + 1);
-    onDateChange(d.toISOString().split('T')[0]);
+    onDateChange(addDaysToDateStr(selectedDate, 1));
   };
 
   const handleToday = () => {
-    onDateChange(new Date().toISOString().split('T')[0]);
+    onDateChange(getBogotaDateStr());
   };
 
-  const formatTitleDate = (dateStr: string) => {
-    const d = new Date(dateStr + 'T00:00:00');
-    return new Intl.DateTimeFormat('es-ES', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    }).format(d);
-  };
 
   // Filter activities
   const filteredActivities = activities.filter((act) => {

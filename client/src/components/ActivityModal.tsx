@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, ActivityCategory, ActivityStatus } from '../types';
 import { CATEGORY_CONFIG, STATUS_CONFIG } from './DailyAgendaView';
+import { getBogotaDateStr } from '../utils/date';
 import { 
   X, 
   Calendar, 
@@ -33,7 +34,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
   const [formData, setFormData] = useState<Partial<Activity>>({
     title: '',
     description: '',
-    date: defaultDate || new Date().toISOString().split('T')[0],
+    date: defaultDate || getBogotaDateStr(),
     start_time: '09:00',
     end_time: '11:00',
     category: 'recorrido',
@@ -57,7 +58,7 @@ export const ActivityModal: React.FC<ActivityModalProps> = ({
       setFormData({
         title: '',
         description: '',
-        date: defaultDate || new Date().toISOString().split('T')[0],
+        date: defaultDate || getBogotaDateStr(),
         start_time: '09:00',
         end_time: '11:00',
         category: 'recorrido',

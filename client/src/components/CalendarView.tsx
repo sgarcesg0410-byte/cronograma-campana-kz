@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Activity } from '../types';
 import { CATEGORY_CONFIG } from './DailyAgendaView';
+import { getBogotaDateStr } from '../utils/date';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -72,7 +73,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   }
 
   // Current month days
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getBogotaDateStr();
   for (let d = 1; d <= daysInMonth; d++) {
     const dateString = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     calendarCells.push({

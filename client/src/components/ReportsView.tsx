@@ -1,6 +1,7 @@
 import React from 'react';
 import { Activity, DashboardStats } from '../types';
 import { CATEGORY_CONFIG, STATUS_CONFIG } from './DailyAgendaView';
+import { getBogotaDateStr } from '../utils/date';
 import { 
   BarChart3, 
   CheckCircle2, 
@@ -92,7 +93,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getBogotaDateStr();
     link.setAttribute('href', url);
     link.setAttribute('download', `reporte_agenda_campana_kz_${todayStr}.csv`);
     document.body.appendChild(link);

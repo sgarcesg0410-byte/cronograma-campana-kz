@@ -26,12 +26,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenWhatsAppModal,
   onSelectView,
 }) => {
-  const todayFormatted = new Intl.DateTimeFormat('es-ES', {
+  const todayFormatted = new Intl.DateTimeFormat('es-CO', {
+    timeZone: 'America/Bogota',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric'
   }).format(new Date());
+
 
   const capitalizeFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 

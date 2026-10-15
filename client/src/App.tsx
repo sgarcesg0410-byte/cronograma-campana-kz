@@ -15,6 +15,7 @@ import { LoginModal } from './components/LoginModal';
 import { UsersManagementView } from './components/UsersManagementView';
 import { AuditLogsView } from './components/AuditLogsView';
 import { CommunityNeedsView } from './components/CommunityNeedsView';
+import { getBogotaDateStr } from './utils/date';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -45,9 +46,8 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(getBogotaDateStr());
+
 
   const [activities, setActivities] = useState<Activity[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
