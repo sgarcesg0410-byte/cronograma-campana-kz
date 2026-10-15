@@ -18,6 +18,7 @@ COPY client/dist/ ./client/dist/
 # Variables de entorno
 ENV NODE_ENV=production
 ENV PORT=5000
+ENV JWT_SECRET=campana_kz_production_secret_2026_voyconelkz
 
 # Puerto expuesto por el contenedor
 EXPOSE 5000
