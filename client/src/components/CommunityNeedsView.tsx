@@ -315,15 +315,17 @@ Descripción: [Detalle claro de la solicitud o requerimiento]`;
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold mb-2">
-              <HeartHandshake className="w-3.5 h-3.5" />
-              <span>Gestión Territorial y Solicitudes Ciudadanas</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black font-heading text-white flex items-center gap-3">
-              Necesidades de la Comunidad
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#38b6ff]/20 text-[#38b6ff] border border-[#38b6ff]/30">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+                <HeartHandshake className="w-3.5 h-3.5" />
+                <span>Gestión Territorial y Solicitudes Ciudadanas</span>
+              </div>
+              <span className="inline-flex items-center px-3 py-1 rounded-full bg-[#38b6ff]/20 text-[#38b6ff] border border-[#38b6ff]/30 text-xs font-semibold">
                 #VOY CON EL KZ
               </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black font-heading text-white">
+              Necesidades de la Comunidad
             </h1>
             <p className="text-slate-400 text-sm mt-1 max-w-2xl">
               Captura inmediata desde el Bot de WhatsApp en barrios y veredas, seguimiento de comitiva y gestión ética bajo Ley 1581 (Habeas Data).

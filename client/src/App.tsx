@@ -223,7 +223,6 @@ export const App: React.FC = () => {
                   onDeleteActivity={handleDeleteActivity}
                   onUpdateStatus={handleUpdateStatus}
                   onOpenWhatsAppActivity={handleOpenWhatsAppActivity}
-                  onPurgeSuccess={loadInitialData}
                 />
               )}
 
