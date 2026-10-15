@@ -301,8 +301,8 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({ curren
       </div>
 
       {/* Role explanation cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        {(['admin', 'candidato', 'coordinador', 'prensa', 'lider'] as CampaignRole[]).map((r) => {
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+        {(['admin', 'candidato', 'coordinador', 'avanzada', 'prensa', 'lider'] as CampaignRole[]).map((r) => {
           const info = ROLE_INFO[r];
           const count = users.filter((u) => u.role === r && u.active === 1).length;
           return (
@@ -350,6 +350,7 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({ curren
             <option value="admin">Administrador</option>
             <option value="candidato">Candidato Oficial</option>
             <option value="coordinador">Coordinador Territorial</option>
+            <option value="avanzada">Equipo de Avanzada</option>
             <option value="prensa">Equipo de Prensa</option>
             <option value="lider">Líder Barrial</option>
           </select>
@@ -585,6 +586,7 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({ curren
                     className="w-full border border-slate-300 rounded-xl p-2.5 text-xs bg-slate-50 focus:ring-2 focus:ring-[#38b6ff] focus:outline-none font-bold"
                   >
                     <option value="coordinador">Coordinador Territorial</option>
+                    <option value="avanzada">Equipo de Avanzada</option>
                     <option value="candidato">Candidato Oficial</option>
                     <option value="prensa">Equipo de Prensa</option>
                     <option value="lider">Líder Barrial / Comunal</option>
@@ -698,6 +700,7 @@ export const UsersManagementView: React.FC<UsersManagementViewProps> = ({ curren
                     className="w-full border border-slate-300 rounded-xl p-2.5 text-xs bg-slate-50 focus:ring-2 focus:ring-[#38b6ff] focus:outline-none font-bold"
                   >
                     <option value="coordinador">Coordinador Territorial</option>
+                    <option value="avanzada">Equipo de Avanzada</option>
                     <option value="candidato">Candidato Oficial</option>
                     <option value="prensa">Equipo de Prensa</option>
                     <option value="lider">Líder Barrial / Comunal</option>

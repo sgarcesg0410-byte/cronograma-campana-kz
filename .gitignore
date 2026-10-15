@@ -4,3 +4,8 @@ client/dist/
 *.log
 cloudflared.exe
 .env
+*.sqlite
+*.sqlite.tmp.*
+server/backups/
+.DS_Store
+Thumbs.db

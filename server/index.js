@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -38,7 +39,47 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'campana_kz_secret_key_2026';
+
+// Safe JWT_SECRET handling: mandatory in production, ephemeral random in development
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('[FATAL SECURITY ERROR] La variable de entorno JWT_SECRET es obligatoria en producción.');
+  } else {
+    console.warn('[SECURITY WARNING] JWT_SECRET no configurada. Generando secreto efímero para desarrollo.');
+    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  }
+}
+
+// In-memory rate limiting map for login attempts (5 failed attempts per 15 minutes per IP/email)
+const loginAttemptsMap = new Map();
+function checkLoginRateLimit(key) {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const maxAttempts = 5;
+  const entry = loginAttemptsMap.get(key) || { count: 0, firstAttempt: now };
+  if (now - entry.firstAttempt > windowMs) {
+    entry.count = 0;
+    entry.firstAttempt = now;
+  }
+  if (entry.count >= maxAttempts) {
+    const waitSeconds = Math.ceil((entry.firstAttempt + windowMs - now) / 1000);
+    return { allowed: false, waitSeconds };
+  }
+  return { allowed: true, entry };
+}
+
+function recordFailedLogin(key) {
+  const rate = checkLoginRateLimit(key);
+  if (rate.entry) {
+    rate.entry.count++;
+    loginAttemptsMap.set(key, rate.entry);
+  }
+}
+
+function clearFailedLogin(key) {
+  loginAttemptsMap.delete(key);
+}
 
 app.use(cors());
 // OWASP: Limit body size to 64kb and capture rawBody for HMAC-SHA256 signature verification
@@ -99,6 +140,13 @@ const ROLE_PERMISSIONS = {
     'reports:read:basic',
     'contacts:read',
     'needs:read', 'needs:read:zone', 'needs:create', 'needs:update',
+    'whatsapp:preview', 'whatsapp:assisted_share'
+  ],
+  avanzada: [
+    'activities:read', 'activities:create', 'activities:edit:territory',
+    'reports:read', 'routesheet:read',
+    'contacts:read', 'contacts:manage',
+    'needs:read', 'needs:create', 'needs:update',
     'whatsapp:preview', 'whatsapp:assisted_share'
   ]
 };
@@ -202,10 +250,22 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(400).json({ error: 'Correo y contraseña son obligatorios.' });
   }
 
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
   const cleanEmail = email.toLowerCase().trim();
+  const rateLimitKey = `${clientIp}_${cleanEmail}`;
+  const rateCheck = checkLoginRateLimit(rateLimitKey);
+
+  if (!rateCheck.allowed) {
+    recordAudit(req, 'LOGIN_RATE_LIMITED', 'auth', cleanEmail, { ip: clientIp, email: cleanEmail });
+    return res.status(429).json({
+      error: `Demasiados intentos fallidos. Por seguridad, intente nuevamente en ${rateCheck.waitSeconds} segundos.`
+    });
+  }
+
   const user = db.queryOne('SELECT * FROM users WHERE email = ?', [cleanEmail]);
 
   if (!user) {
+    recordFailedLogin(rateLimitKey);
     recordAudit(req, 'LOGIN_FAILED_UNKNOWN_EMAIL', 'auth', cleanEmail, { email: cleanEmail });
     return res.status(401).json({ error: 'Credenciales incorrectas. Verifique su correo o contraseña.' });
   }
@@ -217,9 +277,13 @@ app.post('/api/auth/login', (req, res) => {
 
   const isPasswordValid = bcrypt.compareSync(password, user.password_hash);
   if (!isPasswordValid) {
+    recordFailedLogin(rateLimitKey);
     recordAudit(req, 'LOGIN_FAILED_WRONG_PASSWORD', 'auth', user.id, { email: cleanEmail });
     return res.status(401).json({ error: 'Credenciales incorrectas. Verifique su correo o contraseña.' });
   }
+
+  // Clear failed login tracking on success
+  clearFailedLogin(rateLimitKey);
 
   // Record successful login timestamp
   db.run("UPDATE users SET last_login = datetime('now') WHERE id = ?", [user.id]);
@@ -264,7 +328,7 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
 // 3. USER & ROLE MANAGEMENT (ADMIN ONLY)
 // ==========================================
 
-const ALLOWED_ROLES = ['admin', 'candidato', 'coordinador', 'prensa', 'lider'];
+const ALLOWED_ROLES = ['admin', 'candidato', 'coordinador', 'prensa', 'lider', 'avanzada'];
 
 // List all campaign team users
 app.get('/api/users', authenticateToken, requirePermission('users:read'), (req, res) => {
@@ -513,14 +577,23 @@ app.get('/api/activities', authenticateToken, requirePermission('activities:read
 });
 
 // Create activity
-app.post('/api/activities', authenticateToken, requirePermission('activities:create'), (req, res) => {
+app.post('/api/activities', authenticateToken, (req, res) => {
+  const userPermissions = ROLE_PERMISSIONS[req.user.role] || [];
+  const canCreateAll = req.user.role === 'admin' || userPermissions.includes('activities:create');
+  const canCreateMedia = userPermissions.includes('activities:create:media');
+
+  if (!canCreateAll && !canCreateMedia) {
+    recordAudit(req, 'ACCESS_DENIED', 'permission', 'activities:create', { role: req.user.role });
+    return res.status(403).json({ error: `Acceso denegado: Tu rol (${req.user.role}) no tiene autorización para programar actividades.` });
+  }
+
   const {
     title,
     description,
     date,
     start_time,
     end_time,
-    category,
+    category = 'recorrido',
     status = 'programado',
     location_name,
     location_address,
@@ -532,6 +605,10 @@ app.post('/api/activities', authenticateToken, requirePermission('activities:cre
     notes,
     is_demo = 0
   } = req.body;
+
+  if (!canCreateAll && canCreateMedia && category !== 'prensa') {
+    return res.status(403).json({ error: 'El rol Prensa únicamente está autorizado a programar actividades de categoría Prensa / Medios.' });
+  }
 
   if (!title || !date || !start_time || !location_name || !responsible_name) {
     return res.status(400).json({ error: 'Faltan campos obligatorios (Título, Fecha, Hora, Lugar, Responsable).' });
@@ -617,16 +694,28 @@ app.post('/api/activities', authenticateToken, requirePermission('activities:cre
 });
 
 // Update activity
-app.put('/api/activities/:id', authenticateToken, requirePermission('activities:create'), (req, res) => {
-  const {
-    title, description, date, start_time, end_time, category, status,
-    location_name, location_address, location_url, zone, responsible_name,
-    team_assigned, logistics_needed, notes
-  } = req.body;
-
+app.put('/api/activities/:id', authenticateToken, (req, res) => {
   const current = db.queryOne('SELECT * FROM activities WHERE id = ?', [req.params.id]);
   if (!current) {
     return res.status(404).json({ error: 'Actividad no encontrada.' });
+  }
+
+  const userPermissions = ROLE_PERMISSIONS[req.user.role] || [];
+  const canEditAll = req.user.role === 'admin' || userPermissions.includes('activities:edit:all');
+  const canEditTerritory = userPermissions.includes('activities:edit:territory');
+  const canEditMedia = userPermissions.includes('activities:edit:media');
+
+  if (!canEditAll) {
+    if (canEditMedia && current.category === 'prensa') {
+      // Authorized for media activity
+    } else if (canEditTerritory && current.category !== 'prensa') {
+      // Authorized for territorial activity
+    } else {
+      recordAudit(req, 'ACCESS_DENIED', 'permission', 'activities:edit', { role: req.user.role, activityCategory: current.category });
+      return res.status(403).json({
+        error: `Acceso denegado: Tu rol (${req.user.role}) no tiene autorización para modificar esta actividad.`
+      });
+    }
   }
 
   try {
@@ -857,7 +946,7 @@ app.post('/api/activities/purge-demo', authenticateToken, requirePermission('age
 
 // Dashboard metrics
 app.get('/api/activities/stats/dashboard', authenticateToken, requirePermission('reports:read'), (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getBogotaDateParts().dateStr;
 
   const total = db.queryOne('SELECT COUNT(*) as count FROM activities')?.count || 0;
   const completed = db.queryOne("SELECT COUNT(*) as count FROM activities WHERE status = 'cumplido'")?.count || 0;
@@ -939,7 +1028,7 @@ app.get('/api/whatsapp/preview', authenticateToken, requirePermission('whatsapp:
   let title = '';
 
   if (type === 'daily') {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || getBogotaDateParts().dateStr;
     const activities = db.query('SELECT * FROM activities WHERE date = ? ORDER BY start_time ASC', [targetDate]);
     messageText = formatDailyAgendaMessage(targetDate, activities);
     title = `Agenda Oficial del Día (${targetDate})`;
@@ -1017,6 +1106,132 @@ app.post('/api/whatsapp/test-live', authenticateToken, requirePermission('whatsa
   }
 });
 
+// Send single automated WhatsApp notification
+app.post('/api/whatsapp/send-notification', authenticateToken, requirePermission('whatsapp:assisted_share'), async (req, res) => {
+  const { phone, recipientName, messageText, activityId } = req.body;
+
+  if (!phone || !messageText) {
+    return res.status(400).json({ error: 'Teléfono y texto del mensaje son requeridos.' });
+  }
+
+  const cleanPhone = phone.trim();
+  if (!validateE164Phone(cleanPhone)) {
+    return res.status(400).json({ error: 'El teléfono debe tener formato internacional E.164 (Ej. +573001234567).' });
+  }
+
+  try {
+    const result = await dispatchAutomatedNotification({
+      phone: cleanPhone,
+      recipientName: recipientName || 'Destinatario de Campaña',
+      messageText,
+      activityId: activityId || null
+    });
+
+    recordAudit(req, 'WHATSAPP_SINGLE_NOTIFICATION_SENT', 'whatsapp', cleanPhone, {
+      activityId,
+      provider: result.provider,
+      status: result.status,
+      success: result.success
+    });
+
+    res.json({
+      success: result.success,
+      message: result.success ? 'Notificación despachada exitosamente.' : (result.error || 'No se pudo entregar el mensaje'),
+      result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al enviar notificación: ' + err.message });
+  }
+});
+
+// Broadcast daily agenda to active contacts and authorized recipients
+app.post('/api/whatsapp/broadcast-daily', authenticateToken, requirePermission('whatsapp:settings'), async (req, res) => {
+  const { date, categoryFilter } = req.body;
+  const targetDate = date || getBogotaDateParts().dateStr;
+
+  try {
+    let actQuery = "SELECT * FROM activities WHERE date = ? AND status != 'cancelado'";
+    const actParams = [targetDate];
+    if (categoryFilter && categoryFilter !== 'all') {
+      actQuery += ' AND category = ?';
+      actParams.push(categoryFilter);
+    }
+    actQuery += ' ORDER BY start_time ASC';
+
+    const activities = db.query(actQuery, actParams);
+    const message = formatDailyAgendaMessage(targetDate, activities);
+
+    // Collect active contacts from directory
+    const contacts = db.query('SELECT name, phone FROM contacts WHERE active = 1');
+
+    // Also collect authorized recipients from settings
+    const settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+    let authorized = [];
+    try {
+      authorized = JSON.parse(settings?.authorized_phones || '[]');
+    } catch (_) {}
+
+    const allRecipients = [];
+    const seenPhones = new Set();
+
+    // Primary phone
+    if (settings?.primary_phone && validateE164Phone(settings.primary_phone)) {
+      seenPhones.add(settings.primary_phone);
+      allRecipients.push({ name: 'Central de Campaña', phone: settings.primary_phone });
+    }
+
+    // Authorized recipients
+    for (const r of authorized) {
+      if (r.active !== false && r.phone && validateE164Phone(r.phone) && !seenPhones.has(r.phone)) {
+        seenPhones.add(r.phone);
+        allRecipients.push({ name: r.name, phone: r.phone });
+      }
+    }
+
+    // Active directory contacts
+    for (const c of contacts) {
+      if (c.phone && validateE164Phone(c.phone) && !seenPhones.has(c.phone)) {
+        seenPhones.add(c.phone);
+        allRecipients.push({ name: c.name, phone: c.phone });
+      }
+    }
+
+    let totalSent = 0;
+    const nowIso = new Date().toISOString();
+
+    for (const r of allRecipients) {
+      enqueueActivityNotification({
+        activityId: null,
+        recipientPhone: r.phone,
+        recipientName: r.name,
+        notificationType: 'daily_broadcast',
+        dedupeKey: `broadcast_${targetDate}_${r.phone}`,
+        scheduledFor: nowIso,
+        messageText: message,
+        requestId: req.requestId
+      });
+      totalSent++;
+    }
+
+    // Fast dispatch via background queue
+    setImmediate(() => {
+      processNotificationQueue().catch(err => console.error('[FAST BROADCAST DISPATCH ERROR]', err.message));
+    });
+
+    recordAudit(req, 'WHATSAPP_BROADCAST_TRIGGERED', 'whatsapp', targetDate, {
+      totalRecipients: totalSent,
+      categoryFilter
+    });
+
+    res.json({
+      totalSent,
+      message: `Difusión de agenda programada exitosamente para ${totalSent} destinatarios.`
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error en la difusión de agenda: ' + err.message });
+  }
+});
+
 // WhatsApp Settings (Admin & Coordinador)
 app.get('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp:settings'), (req, res) => {
   let settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
@@ -1036,8 +1251,11 @@ app.get('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp
     parsedAuth = [];
   }
 
+  const hasToken = Boolean(settings.api_token && settings.api_token.trim().length > 0);
   const safeSettings = {
     ...settings,
+    api_token_configured: hasToken,
+    api_token: hasToken ? '••••••••' : '',
     authorized_phones: parsedAuth
   };
 
@@ -1123,6 +1341,12 @@ app.put('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp
 
   const current = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1') || {};
 
+  // Preserve existing api_token if masked placeholder was submitted or left blank
+  let resolvedApiToken = current.api_token;
+  if (api_token !== undefined && api_token !== '••••••••' && api_token.trim() !== '') {
+    resolvedApiToken = api_token.trim();
+  }
+
   try {
     db.run(`
       INSERT OR REPLACE INTO whatsapp_settings (
@@ -1141,7 +1365,7 @@ app.put('/api/whatsapp/settings', authenticateToken, requirePermission('whatsapp
     `, [
       provider || current.provider || 'assisted',
       api_url !== undefined ? api_url : current.api_url,
-      api_token !== undefined ? api_token : current.api_token,
+      resolvedApiToken,
       account_sid !== undefined ? account_sid : current.account_sid,
       sender_phone !== undefined ? sender_phone : current.sender_phone,
       primary_phone !== undefined ? primary_phone : current.primary_phone,
@@ -1263,9 +1487,8 @@ app.post('/api/whatsapp/incoming', async (req, res) => {
   const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.WEBHOOK_SECRET || 'campana_kz_webhook_secret_2026';
 
   const isSignatureValid = validateWebhookSignature(req.rawBody || Buffer.from(JSON.stringify(req.body)), signatureHeader, appSecret);
-  const isDevOrSimulated = process.env.NODE_ENV !== 'production' && req.headers['x-simulation-test'] === 'true';
 
-  if (!isSignatureValid && !isDevOrSimulated) {
+  if (!isSignatureValid) {
     recordAudit(req, 'WEBHOOK_SIGNATURE_REJECTED', 'whatsapp_webhook', 'incoming', { ip: req.ip });
     return res.status(401).json({ error: 'Firma de webhook inválida o ausente (X-Hub-Signature-256).' });
   }
@@ -1486,8 +1709,15 @@ app.get('/api/needs/:id', authenticateToken, requirePermission('needs:read'), (r
   const need = db.queryOne('SELECT * FROM community_needs WHERE id = ?', [req.params.id]);
   if (!need) return res.status(404).json({ error: 'Necesidad no encontrada.' });
 
+  const canSeeFullPII = ['admin', 'coordinador'].includes(req.user.role);
+  const sanitizedNeed = {
+    ...need,
+    phone_masked: maskPhone(need.phone),
+    phone: canSeeFullPII ? need.phone : maskPhone(need.phone)
+  };
+
   recordAudit(req, 'COMMUNITY_NEED_VIEWED', 'community_needs', need.id, { category: need.category });
-  res.json({ need });
+  res.json({ need: sanitizedNeed });
 });
 
 // Create manual need
@@ -1638,7 +1868,7 @@ app.use((req, res) => {
 async function startServer() {
   await initDatabase();
 
-  // Background cron worker: Process resilient notification queue every 1 minute (Render Safety Net)
+  // Background cron worker: Process resilient notification queue and broadcast daily agenda
   cron.schedule('* * * * *', async () => {
     try {
       const processed = await processNotificationQueue();
@@ -1648,36 +1878,44 @@ async function startServer() {
     } catch (err) {
       console.error('[CRON WORKER ERROR]', err.message);
     }
-  });
 
-  // Daily agenda broadcast worker at 07:00 AM America/Bogota
-  cron.schedule('0 7 * * *', async () => {
+    // Daily agenda broadcast based on whatsapp_settings.daily_summary_time in America/Bogota
     try {
-      const { dateStr: todayBogota } = getBogotaDateParts();
-      const todayActivities = db.query("SELECT * FROM activities WHERE date = ? AND status != 'cancelado' ORDER BY start_time ASC", [todayBogota]);
-      if (todayActivities.length > 0) {
-        const message = formatDailyAgendaMessage(todayBogota, todayActivities);
-        const recipients = getNotificationRecipients(null);
+      const { hours, minutes, dateStr: todayBogota } = getBogotaDateParts();
+      const currentHHMM = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      const settings = db.queryOne('SELECT daily_summary_time FROM whatsapp_settings WHERE id = 1');
+      const targetTime = settings?.daily_summary_time || '07:00';
 
-        for (const r of recipients) {
-          if (validateE164Phone(r.phone)) {
-            enqueueActivityNotification({
-              activityId: null,
-              recipientPhone: r.phone,
-              recipientName: r.name,
-              notificationType: 'daily_agenda',
-              dedupeKey: `agenda_${todayBogota}_${r.phone}`,
-              scheduledFor: new Date().toISOString(),
-              messageText: message
-            });
+      if (currentHHMM === targetTime) {
+        const todayActivities = db.query("SELECT * FROM activities WHERE date = ? AND status != 'cancelado' ORDER BY start_time ASC", [todayBogota]);
+        if (todayActivities.length > 0) {
+          const message = formatDailyAgendaMessage(todayBogota, todayActivities);
+          const recipients = getNotificationRecipients(null);
+
+          let enqueuedCount = 0;
+          for (const r of recipients) {
+            if (validateE164Phone(r.phone)) {
+              const ok = enqueueActivityNotification({
+                activityId: null,
+                recipientPhone: r.phone,
+                recipientName: r.name,
+                notificationType: 'daily_agenda',
+                dedupeKey: `cron_agenda_${todayBogota}_${r.phone}`,
+                scheduledFor: new Date().toISOString(),
+                messageText: message
+              });
+              if (ok) enqueuedCount++;
+            }
+          }
+          if (enqueuedCount > 0) {
+            await processNotificationQueue();
           }
         }
-        await processNotificationQueue();
       }
     } catch (cronErr) {
       console.error('[DAILY AGENDA CRON ERROR]', cronErr.message);
     }
-  }, { timezone: 'America/Bogota' });
+  });
 
   app.listen(PORT, () => {
     console.log(`\n======================================================`);

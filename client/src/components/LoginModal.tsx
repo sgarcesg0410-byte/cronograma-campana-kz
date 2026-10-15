@@ -8,8 +8,8 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('admin@voyconelkz.com');
-  const [password, setPassword] = useState('kz2026!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,11 +25,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = (quickEmail: string) => {
-    setEmail(quickEmail);
-    setPassword('kz2026!');
   };
 
   return (
@@ -112,48 +107,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess }) => {
           </button>
         </form>
 
-        {/* Fast Role Login selector */}
-        <div className="mt-6 pt-5 border-t border-slate-800">
-          <p className="text-[11px] font-bold text-slate-400 mb-2.5 text-center uppercase tracking-wider">
-            Accesos Rápidos de Campaña:
-          </p>
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('admin@voyconelkz.com')}
-              className="text-left p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-xs flex items-center justify-between text-slate-300 hover:text-white transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-[#38b6ff]" />
-                <span className="font-bold">Administrador General</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">admin@voyconelkz.com</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('candidato@voyconelkz.com')}
-              className="text-left p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-xs flex items-center justify-between text-slate-300 hover:text-white transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <UserCheck className="w-4 h-4 text-emerald-400" />
-                <span className="font-bold">Candidato KZ</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">candidato@voyconelkz.com</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('avanzada@voyconelkz.com')}
-              className="text-left p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-xs flex items-center justify-between text-slate-300 hover:text-white transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <UserCheck className="w-4 h-4 text-amber-400" />
-                <span className="font-bold">Coordinador de Avanzada</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">avanzada@voyconelkz.com</span>
-            </button>
+        {/* Security footer note */}
+        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
+          <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#38b6ff]" />
+            <span>Acceso seguro cifrado para equipo de campaña</span>
           </div>
+          <p className="text-[10px] text-slate-500 mt-1">
+            Plataforma oficial #VOY CON EL KZ • Solo personal autorizado
+          </p>
         </div>
 
       </div>

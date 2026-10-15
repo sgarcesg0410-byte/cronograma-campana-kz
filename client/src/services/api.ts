@@ -79,14 +79,18 @@ export const api = {
     if (params?.status) query.append('status', params.status);
     if (params?.search) query.append('search', params.search);
 
-    const res = await fetch(`${API_BASE}/activities?${query.toString()}`);
+    const res = await fetch(`${API_BASE}/activities?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al cargar actividades');
     return data.activities || [];
   },
 
   async getActivity(id: number): Promise<Activity> {
-    const res = await fetch(`${API_BASE}/activities/${id}`);
+    const res = await fetch(`${API_BASE}/activities/${id}`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al obtener actividad');
     return data.activity;
@@ -125,7 +129,9 @@ export const api = {
 
   // Dashboard Stats
   async getDashboardStats(): Promise<DashboardStats> {
-    const res = await fetch(`${API_BASE}/activities/stats/dashboard`);
+    const res = await fetch(`${API_BASE}/activities/stats/dashboard`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al cargar estadísticas');
     return data;
@@ -133,7 +139,9 @@ export const api = {
 
   // Contacts
   async getContacts(): Promise<Contact[]> {
-    const res = await fetch(`${API_BASE}/contacts`);
+    const res = await fetch(`${API_BASE}/contacts`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al cargar contactos');
     return data.contacts || [];
@@ -181,7 +189,9 @@ export const api = {
     if (params.activityId) query.append('activityId', params.activityId.toString());
     if (params.phone) query.append('phone', params.phone);
 
-    const res = await fetch(`${API_BASE}/whatsapp/preview?${query.toString()}`);
+    const res = await fetch(`${API_BASE}/whatsapp/preview?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Error al generar vista previa');
     return data;

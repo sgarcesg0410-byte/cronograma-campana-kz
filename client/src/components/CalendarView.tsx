@@ -60,10 +60,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   // Prev month padding
   for (let i = startDayOffset - 1; i >= 0; i--) {
     const dayNum = daysInPrevMonth - i;
+    const prevDate = new Date(year, month - 1, dayNum);
+    const pYear = prevDate.getFullYear();
+    const pMonth = String(prevDate.getMonth() + 1).padStart(2, '0');
+    const pDay = String(prevDate.getDate()).padStart(2, '0');
     calendarCells.push({
       day: dayNum,
       isCurrentMonth: false,
-      dateString: `${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`,
+      dateString: `${pYear}-${pMonth}-${pDay}`,
     });
   }
 
@@ -82,10 +86,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   // Next month padding to fill 35 or 42 cells
   const remaining = (7 - (calendarCells.length % 7)) % 7;
   for (let n = 1; n <= remaining; n++) {
+    const nextDate = new Date(year, month + 1, n);
+    const nYear = nextDate.getFullYear();
+    const nMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+    const nDay = String(nextDate.getDate()).padStart(2, '0');
     calendarCells.push({
       day: n,
       isCurrentMonth: false,
-      dateString: `${year}-${String(month + 2).padStart(2, '0')}-${String(n).padStart(2, '0')}`,
+      dateString: `${nYear}-${nMonth}-${nDay}`,
     });
   }
 

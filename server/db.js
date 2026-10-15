@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
@@ -20,12 +21,24 @@ if (!fs.existsSync(BACKUPS_DIR)) {
 
 let sqlDb = null;
 
-// Helper to save DB to disk
+// Helper to save DB to disk atomically (temp file + rename/copy)
 export function saveToDisk() {
   if (!sqlDb) return;
   const data = sqlDb.export();
   const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_FILE, buffer);
+  const tmpFile = `${DB_FILE}.tmp.${Date.now()}.${Math.random().toString(36).substring(2, 7)}`;
+  try {
+    fs.writeFileSync(tmpFile, buffer);
+    fs.renameSync(tmpFile, DB_FILE);
+  } catch (err) {
+    // Windows file-lock fallback
+    try {
+      fs.writeFileSync(DB_FILE, buffer);
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    } catch (e) {
+      console.error('[DB SAVE ERROR]', e.message);
+    }
+  }
 }
 
 // Wrapper DB interface with transaction support
@@ -147,7 +160,7 @@ export async function initDatabase() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin', 'candidato', 'coordinador', 'prensa', 'lider')),
+      role TEXT NOT NULL CHECK(role IN ('admin', 'candidato', 'coordinador', 'prensa', 'lider', 'avanzada')),
       zone TEXT DEFAULT 'General',
       phone TEXT,
       active INTEGER NOT NULL DEFAULT 1,

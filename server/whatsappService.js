@@ -450,15 +450,19 @@ export function checkTestLiveRateLimit(key, maxAttempts = 5, windowMinutes = 15)
 
 // Meta WhatsApp Cloud API Provider (Official Meta Business)
 class MetaCloudProvider {
+  constructor(config = {}) {
+    this.config = config;
+  }
+
   async sendTextMessage({ to, text }) {
-    const token = process.env.META_WA_TOKEN;
-    const phoneId = process.env.META_PHONE_NUMBER_ID;
+    const token = this.config.token || process.env.META_WA_TOKEN;
+    const phoneId = this.config.phoneId || process.env.META_PHONE_NUMBER_ID;
 
     if (!token || !phoneId) {
       return {
         success: false,
         status: 'not_configured',
-        error: 'Credenciales de Meta Cloud API no configuradas en variables de entorno (META_WA_TOKEN / META_PHONE_NUMBER_ID).'
+        error: 'Credenciales de Meta Cloud API no configuradas en panel o variables de entorno (META_WA_TOKEN / META_PHONE_NUMBER_ID).'
       };
     }
 
@@ -506,16 +510,20 @@ class MetaCloudProvider {
 
 // Twilio WhatsApp Provider
 class TwilioProvider {
+  constructor(config = {}) {
+    this.config = config;
+  }
+
   async sendTextMessage({ to, text }) {
-    const sid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const fromNumber = process.env.TWILIO_FROM_PHONE;
+    const sid = this.config.sid || process.env.TWILIO_ACCOUNT_SID;
+    const authToken = this.config.authToken || process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = this.config.fromNumber || process.env.TWILIO_FROM_PHONE;
 
     if (!sid || !authToken || !fromNumber) {
       return {
         success: false,
         status: 'not_configured',
-        error: 'Credenciales de Twilio no configuradas en variables de entorno.'
+        error: 'Credenciales de Twilio no configuradas en panel o variables de entorno.'
       };
     }
 
@@ -558,6 +566,10 @@ class TwilioProvider {
 
 // Assisted / Simulation Provider
 class AssistedProvider {
+  constructor(config = {}) {
+    this.config = config;
+  }
+
   async sendTextMessage({ to, text }) {
     return {
       success: true,
@@ -571,16 +583,20 @@ class AssistedProvider {
 
 // Evolution API / Baileys QR Gateway Provider
 class EvolutionApiProvider {
+  constructor(config = {}) {
+    this.config = config;
+  }
+
   async sendTextMessage({ to, text }) {
-    const apiUrl = process.env.EVOLUTION_API_URL;
-    const apiKey = process.env.EVOLUTION_API_KEY;
-    const instance = process.env.EVOLUTION_INSTANCE || 'campana_kz';
+    const apiUrl = this.config.apiUrl || process.env.EVOLUTION_API_URL;
+    const apiKey = this.config.apiKey || process.env.EVOLUTION_API_KEY;
+    const instance = this.config.instance || process.env.EVOLUTION_INSTANCE || 'campana_kz';
 
     if (!apiUrl || !apiKey) {
       return {
         success: false,
         status: 'not_configured',
-        error: 'Credenciales de Evolution API no configuradas en variables de entorno.'
+        error: 'Credenciales de Evolution API no configuradas en panel o variables de entorno.'
       };
     }
 
@@ -620,12 +636,34 @@ class EvolutionApiProvider {
   }
 }
 
-// Provider factory
-export function getWhatsAppProvider(providerName) {
-  const selected = providerName || process.env.WA_PROVIDER || 'assisted';
-  if (selected === 'meta_cloud') return new MetaCloudProvider();
-  if (selected === 'twilio') return new TwilioProvider();
-  if (selected === 'evolution_api') return new EvolutionApiProvider();
+// Provider factory with DB settings integration
+export function getWhatsAppProvider(providerName = null) {
+  let dbSettings = null;
+  try {
+    dbSettings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+  } catch (_) {}
+
+  const selected = providerName || dbSettings?.provider || process.env.WA_PROVIDER || 'assisted';
+  if (selected === 'meta_cloud') {
+    return new MetaCloudProvider({
+      token: dbSettings?.api_token || process.env.META_WA_TOKEN,
+      phoneId: dbSettings?.account_sid || dbSettings?.sender_phone || process.env.META_PHONE_NUMBER_ID
+    });
+  }
+  if (selected === 'twilio') {
+    return new TwilioProvider({
+      sid: dbSettings?.account_sid || process.env.TWILIO_ACCOUNT_SID,
+      authToken: dbSettings?.api_token || process.env.TWILIO_AUTH_TOKEN,
+      fromNumber: dbSettings?.sender_phone || process.env.TWILIO_FROM_PHONE
+    });
+  }
+  if (selected === 'evolution_api') {
+    return new EvolutionApiProvider({
+      apiUrl: dbSettings?.api_url || process.env.EVOLUTION_API_URL,
+      apiKey: dbSettings?.api_token || process.env.EVOLUTION_API_KEY,
+      instance: dbSettings?.sender_phone || process.env.EVOLUTION_INSTANCE || 'campana_kz'
+    });
+  }
   return new AssistedProvider();
 }
 
@@ -938,6 +976,16 @@ export function getNotificationRecipients(activity) {
 export function scheduleAdvanceReminders(activity, recipients = null, requestId = 'sys') {
   if (!activity || !activity.date || !activity.id) return 0;
 
+  // Load settings for auto_reminders_enabled and reminder_minutes_before
+  let settings = null;
+  try {
+    settings = db.queryOne('SELECT * FROM whatsapp_settings WHERE id = 1');
+  } catch (_) {}
+
+  if (settings && settings.auto_reminders_enabled === 0) {
+    return 0;
+  }
+
   // If activity date is in the past in Colombia, do NOT schedule reminders
   const { dateStr: todayBogota } = getBogotaDateParts();
   if (activity.date < todayBogota) {
@@ -958,17 +1006,23 @@ export function scheduleAdvanceReminders(activity, recipients = null, requestId 
 
   const nowIso = new Date().toISOString();
 
+  // Calculate same-day reminder based on reminder_minutes_before
+  const reminderMinutesBefore = settings?.reminder_minutes_before || 60;
+  const sameDayTotalMinutes = Math.max(7 * 60, (startH * 60 + startM) - reminderMinutesBefore);
+  const sameDayHour = Math.floor(sameDayTotalMinutes / 60);
+  const sameDayMin = sameDayTotalMinutes % 60;
+
   // Milestone definitions: 7 days, 3 days, 1 day, same day
   const milestones = [
-    { daysBefore: 7, label: 'Faltan 7 días', key: '7d', hour: 8 },
-    { daysBefore: 3, label: 'Faltan 3 días', key: '3d', hour: 8 },
-    { daysBefore: 1, label: 'Mañana', key: '1d', hour: 8 },
+    { daysBefore: 7, label: 'Faltan 7 días', key: '7d', hour: 8, minute: 0 },
+    { daysBefore: 3, label: 'Faltan 3 días', key: '3d', hour: 8, minute: 0 },
+    { daysBefore: 1, label: 'Mañana', key: '1d', hour: 8, minute: 0 },
     {
       daysBefore: 0,
-      label: 'Hoy',
+      label: `Hoy (${reminderMinutesBefore} min antes)`,
       key: 'sameday',
-      hour: Math.max(7, startH - 2),
-      minute: startM
+      hour: sameDayHour,
+      minute: sameDayMin
     }
   ];
 
@@ -1010,6 +1064,21 @@ export function scheduleAdvanceReminders(activity, recipients = null, requestId 
 
 export async function processNotificationQueue() {
   try {
+    // Reclaim orphaned jobs stuck in 'processing' for more than 5 minutes (process crash recovery)
+    try {
+      const fiveMinAgoIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      db.run(`
+        UPDATE notification_queue
+        SET status = 'pending', error_message = 'Reclamado por tiempo de espera en procesamiento'
+        WHERE status = 'processing' AND (
+          (created_at <= datetime('now', '-5 minutes')) OR
+          (scheduled_for <= ?)
+        )
+      `, [fiveMinAgoIso]);
+    } catch (reclaimErr) {
+      console.warn('[RECLAIM QUEUE WARNING]', reclaimErr.message);
+    }
+
     const nowIso = new Date().toISOString();
     const pendingItems = db.query(`
       SELECT * FROM notification_queue

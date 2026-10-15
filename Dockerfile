@@ -24,10 +24,9 @@ RUN npm install --omit=dev
 COPY server/ ./server/
 COPY --from=client-builder /app/client/dist ./client/dist
 
-# Variables de entorno
+# Variables de entorno por defecto (JWT_SECRET debe proveerse al desplegar el contenedor)
 ENV NODE_ENV=production
 ENV PORT=5000
-ENV JWT_SECRET=campana_kz_secret_key_2026
 
 # Puerto expuesto
 EXPOSE 5000

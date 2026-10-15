@@ -20,7 +20,31 @@ export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  const [currentView, setCurrentView] = useState<string>('daily');
+  const VALID_VIEWS = ['daily', 'calendar', 'reports', 'whatsapp', 'contacts', 'needs', 'users', 'audit', 'print'];
+
+  const getInitialView = () => {
+    const hash = window.location.hash.replace('#', '').trim();
+    return VALID_VIEWS.includes(hash) ? hash : 'daily';
+  };
+
+  const [currentView, setCurrentView] = useState<string>(getInitialView);
+
+  const handleSelectView = (view: string) => {
+    setCurrentView(view);
+    window.location.hash = view;
+  };
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace('#', '').trim();
+      if (VALID_VIEWS.includes(hash)) {
+        setCurrentView(hash);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
@@ -165,8 +189,8 @@ export const App: React.FC = () => {
         currentUser={currentUser}
         onLogout={handleLogout}
         onOpenCreateModal={() => handleOpenCreateModal()}
-        onOpenWhatsAppModal={() => setCurrentView('whatsapp')}
-        onSelectView={setCurrentView}
+        onOpenWhatsAppModal={() => handleSelectView('whatsapp')}
+        onSelectView={handleSelectView}
       />
 
       {/* Main Layout Area */}
@@ -175,7 +199,7 @@ export const App: React.FC = () => {
         {/* Sidebar */}
         <Sidebar
           currentView={currentView}
-          onSelectView={setCurrentView}
+          onSelectView={handleSelectView}
           summary={stats?.summary}
           currentUser={currentUser}
         />
@@ -208,12 +232,12 @@ export const App: React.FC = () => {
                   activities={activities}
                   onSelectDate={(date) => {
                     setSelectedDate(date);
-                    setCurrentView('daily');
+                    handleSelectView('daily');
                   }}
                   onOpenCreateModal={handleOpenCreateModal}
                   onSelectActivity={(act) => {
                     setSelectedDate(act.date);
-                    setCurrentView('daily');
+                    handleSelectView('daily');
                   }}
                 />
               )}
@@ -222,7 +246,7 @@ export const App: React.FC = () => {
                 <ReportsView
                   stats={stats}
                   activities={activities}
-                  onSelectView={setCurrentView}
+                  onSelectView={handleSelectView}
                 />
               )}
 

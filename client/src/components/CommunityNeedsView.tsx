@@ -519,8 +519,9 @@ Descripción: [Detalle claro de la solicitud o requerimiento]`;
             const isUrgent = item.priority === 'Urgente' || item.priority === 'Alta';
             const displayPhone = unmaskAll && item.phone ? item.phone : (item.phone_masked || item.phone);
             
-            // Clean phone for wa.me direct button
-            const cleanPhoneDigits = (item.phone || '').replace(/[^0-9]/g, '');
+            // Clean phone for wa.me direct button (only if phone is unmasked and real)
+            const isMasked = !item.phone || item.phone.includes('*');
+            const cleanPhoneDigits = !isMasked ? (item.phone || '').replace(/[^0-9]/g, '') : '';
             const waFollowUpText = encodeURIComponent(
               `Hola ${item.person_name}, cordial saludo del equipo de campaña #VOY CON EL KZ. Le escribimos en seguimiento a su solicitud comunitaria en el barrio ${item.neighborhood} sobre: ${item.category}. ¿Cómo podemos coordinar?`
             );

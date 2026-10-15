@@ -51,6 +51,56 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const responsibleList = Object.entries(responsibleStats).sort((a, b) => b[1].total - a[1].total);
 
+  const handleExportCSV = () => {
+    if (!activities || activities.length === 0) {
+      alert('No hay actividades registradas para exportar.');
+      return;
+    }
+
+    const headers = [
+      'ID', 'Título', 'Fecha', 'Hora Inicio', 'Hora Fin',
+      'Categoría', 'Estado', 'Lugar', 'Dirección', 'Zona',
+      'Responsable', 'Comitiva', 'Logística', 'Notas', 'Es Demo'
+    ];
+
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = activities.map(act => [
+      act.id,
+      escapeCsv(act.title),
+      escapeCsv(act.date),
+      escapeCsv(act.start_time),
+      escapeCsv(act.end_time || ''),
+      escapeCsv(act.category),
+      escapeCsv(act.status),
+      escapeCsv(act.location_name),
+      escapeCsv(act.location_address || ''),
+      escapeCsv(act.zone || 'General'),
+      escapeCsv(act.responsible_name),
+      escapeCsv(act.team_assigned || ''),
+      escapeCsv(act.logistics_needed || ''),
+      escapeCsv(act.notes || ''),
+      act.is_demo ? 'Sí' : 'No'
+    ].join(','));
+
+    // UTF-8 BOM (\uFEFF) for native Excel compatibility
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const todayStr = new Date().toISOString().split('T')[0];
+    link.setAttribute('href', url);
+    link.setAttribute('download', `reporte_agenda_campana_kz_${todayStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
       
@@ -72,6 +122,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleExportCSV}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-transform hover:scale-105"
+            title="Descargar reporte completo en formato compatible con Excel / CSV"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Exportar Excel / CSV</span>
+          </button>
           <button
             onClick={() => onSelectView('print')}
             className="bg-[#38b6ff] hover:bg-[#20a7f5] text-slate-950 font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-transform hover:scale-105"
