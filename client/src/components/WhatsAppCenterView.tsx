@@ -358,43 +358,40 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
         </div>
 
         {/* Tab switchers */}
-        <div className="flex items-center bg-slate-800/90 p-1.5 rounded-xl border border-slate-700 self-start md:self-center">
+        <div className="flex items-center bg-slate-800/90 p-1.5 rounded-xl border border-slate-700 self-start md:self-center gap-1.5">
           <button
             onClick={() => setActiveTab('direct')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'direct' ? 'bg-emerald-500 text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeTab === 'direct' ? 'bg-emerald-500 text-slate-950 shadow-md' : 'text-slate-300 hover:text-white'
             }`}
           >
-            <Smartphone className="w-3.5 h-3.5" />
-            <span>Opción 1: 1-Clic Web</span>
+            <Smartphone className="w-4 h-4" />
+            <span>Enviar Agenda</span>
           </button>
-          <button
-            onClick={() => setActiveTab('automated')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'automated' ? 'bg-[#38b6ff] text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <Bot className="w-3.5 h-3.5" />
-            <span>Opción 2: Gateway API</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('logs')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            <span>Historial ({logs.length})</span>
-          </button>
+
           <button
             onClick={() => setActiveTab('settings')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'settings' ? 'bg-amber-400 text-slate-950 shadow-sm' : 'text-slate-300 hover:text-white bg-slate-700/50'
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeTab === 'settings' ? 'bg-[#38b6ff] text-slate-950 shadow-md' : 'text-slate-300 hover:text-white'
             }`}
-            title="Configuración de Proveedor y Vinculación QR"
           >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Configuración & QR</span>
+            <QrCode className="w-4 h-4" />
+            <span>Vincular Celular (QR)</span>
+            {baileysStatus?.connected ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('logs')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+              activeTab === 'logs' ? 'bg-white text-slate-900 shadow-md' : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            <History className="w-4 h-4" />
+            <span>Historial ({logs.length})</span>
           </button>
         </div>
       </div>
@@ -543,10 +540,20 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
                     disabled={sendingSingle}
                     className="bg-[#38b6ff] hover:bg-[#1fa5f5] text-slate-950 font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                   >
-                    <Bot className="w-3.5 h-3.5" />
-                    <span>{sendingSingle ? 'Enviando...' : 'Despachar API'}</span>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{sendingSingle ? 'Despachando...' : 'Enviar por WhatsApp Bot'}</span>
                   </button>
                 </div>
+
+                {/* Difusión Masiva del Día */}
+                <button
+                  onClick={handleBroadcastDaily}
+                  disabled={isBroadcasting}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 border border-slate-700 transition-colors disabled:opacity-50"
+                >
+                  <Radio className="w-3.5 h-3.5 text-[#38b6ff]" />
+                  <span>{isBroadcasting ? 'Despachando a la comitiva...' : `Difundir Agenda a toda la Comitiva (${contacts.filter(c => c.active).length} contactos)`}</span>
+                </button>
               </div>
 
             </div>
@@ -610,241 +617,7 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
       </div>
       )}
 
-      {/* TAB 2: AUTOMATED GATEWAY & BROADCAST */}
-      {activeTab === 'automated' && (
-        <div className="space-y-6">
-          {/* Quick QR Setup Notice */}
-          <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-800 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
-                <QrCode className="w-5 h-5" />
-              </div>
-              <div>
-                <h4 className="font-bold text-sm text-white">Línea de Salida de WhatsApp Oficial</h4>
-                <p className="text-xs text-slate-400">
-                  Proveedor: <strong className="text-[#38b6ff] uppercase">{settings?.provider || 'Sin configurar'}</strong>
-                  {baileysStatus?.connected ? (
-                    <span className="text-emerald-400 ml-2 font-bold">● Conectado ({baileysStatus.phone})</span>
-                  ) : (
-                    <span className="text-amber-400 ml-2 font-medium">● Sin vincular por QR</span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setActiveTab('settings')}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 self-start sm:self-center transition shadow-sm"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>{baileysStatus?.connected ? 'Administrar Conexión QR' : 'Vincular por Código QR'}</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* Broadcast Daily to All Card */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <div className="w-12 h-12 bg-sky-50 text-[#38b6ff] rounded-2xl flex items-center justify-center border border-sky-100">
-                <Radio className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 font-heading">
-                  Difusión Masiva de Agenda del Día
-                </h3>
-                <p className="text-xs text-slate-600 mt-1">
-                  Despacha la agenda completa de hoy por API a todos los contactos y grupos activos registrados ({contacts.filter(c => c.active).length} destinatarios).
-                </p>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl text-xs space-y-1.5 border border-slate-100">
-                <div className="flex justify-between text-slate-600">
-                  <span>Fecha seleccionada:</span>
-                  <span className="font-bold text-slate-900">{selectedDate}</span>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Proveedor actual:</span>
-                  <span className="font-bold text-emerald-700 uppercase">{settings?.provider || 'SIMULACIÓN'}</span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleBroadcastDaily}
-                disabled={isBroadcasting}
-                className="w-full bg-[#38b6ff] hover:bg-[#1ea1f0] text-slate-950 font-bold text-sm py-3 px-4 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50"
-              >
-                <Send className="w-4 h-4" />
-                <span>{isBroadcasting ? 'Despachando difusión...' : 'Disparar Difusión Masiva Ahora'}</span>
-              </button>
-
-              {broadcastResult && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl font-medium">
-                  {broadcastResult}
-                </div>
-              )}
-            </div>
-
-            {/* Cron & Auto-Reminders Status Card */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center border border-emerald-100">
-                <Bot className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 font-heading">
-                  Planificador de Recordatorios Automáticos (Cron)
-                </h3>
-                <p className="text-xs text-slate-600 mt-1">
-                  El servidor de campaña supervisa en segundo plano las actividades programadas y despacha alertas automáticas antes de cada evento.
-                </p>
-              </div>
-
-              <div className="space-y-2.5 pt-2 text-xs">
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-slate-600 font-medium">Estado del Cron:</span>
-                  <span className="inline-flex items-center gap-1.5 font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                    Activo y Supervisando
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-slate-600 font-medium">Anticipación de Alerta:</span>
-                  <span className="font-bold text-slate-900">
-                    {settings?.reminder_minutes_before || 60} minutos antes
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-slate-600 font-medium">Frecuencia de escaneo:</span>
-                  <span className="font-bold text-slate-900">Cada 10 minutos</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setActiveTab('settings')}
-                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs py-2.5 px-4 rounded-xl border border-slate-200 transition-colors"
-              >
-                Ajustar tiempos en Configuración
-              </button>
-            </div>
-
-          </div>
-
-          {/* Controlled Live Test Diagnostic Card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 bg-indigo-50 text-indigo-700 rounded-xl flex items-center justify-center font-bold">
-                  <PulseIcon className="w-5 h-5 text-indigo-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 font-heading">
-                    Diagnóstico y Despacho de Prueba en Tiempo Real
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Verificación de canal oficial con proveedor activo (Meta Cloud, Twilio o Simulador)
-                  </p>
-                </div>
-              </div>
-              <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full border border-slate-200">
-                Rate Limit: 5 envíos / 15 min
-              </span>
-            </div>
-
-            {testError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2 font-medium">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                <span>{testError}</span>
-              </div>
-            )}
-
-            {testResult && (
-              <div className={`p-4 rounded-xl text-xs space-y-1.5 border ${
-                testResult.success
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : 'bg-amber-50 border-amber-200 text-amber-900'
-              }`}>
-                <div className="font-bold flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Resultado del Despacho: {testResult.note || 'Completado'}</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
-                  <div>
-                    <span className="text-slate-500 block">Proveedor:</span>
-                    <span className="font-bold uppercase text-slate-800">{testResult.provider}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Estado:</span>
-                    <span className="font-bold text-slate-800">{testResult.status}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Message ID:</span>
-                    <span className="font-bold text-slate-800 truncate block">{testResult.messageId}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Intentos Restantes:</span>
-                    <span className="font-bold text-slate-800">{testResult.remainingAttempts ?? 'N/A'}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleRunTestLive} className="space-y-3 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-800 block mb-1">
-                    Número de Destino de Prueba (E.164) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="+573001234567"
-                    value={testPhone}
-                    onChange={(e) => setTestPhone(e.target.value)}
-                    className="w-full border border-slate-300 rounded-xl p-2.5 font-mono text-sm focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Escriba su número con indicativo internacional para recibir el mensaje de verificación.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-800 block mb-1">
-                    Texto Personalizado (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Mensaje de prueba oficial..."
-                    value={testCustomMsg}
-                    onChange={(e) => setTestCustomMsg(e.target.value)}
-                    className="w-full border border-slate-300 rounded-xl p-2.5 text-xs focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Si se deja vacío, se enviará la plantilla oficial #VOY CON EL KZ.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  disabled={testLoading}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-5 rounded-xl flex items-center gap-2 shadow-sm transition-transform hover:scale-[1.02] disabled:opacity-50"
-                >
-                  {testLoading ? (
-                    <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
-                  <span>Despachar Mensaje de Prueba en Vivo</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-        </div>
-      )}
-
-      {/* TAB 3: SETTINGS (PRIMARY PHONE, AUTHORIZED RECIPIENTS, ALERTS, QUIET HOURS & PROVIDER) */}
+      {/* TAB 2: VINCULACIÓN QR Y CONFIGURACIÓN */}
       {activeTab === 'settings' && settings && (
         <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-sm max-w-4xl space-y-8">
           <div>
@@ -886,13 +659,164 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
 
           <form onSubmit={handleSaveSettings} className="space-y-8 text-xs sm:text-sm">
             
-            {/* SECCIÓN 1: NÚMERO PRINCIPAL Y DISPARADORES EN TIEMPO REAL */}
+            {/* SECCIÓN 1: VINCULACIÓN DIRECTA POR CÓDIGO QR (BAILEYS) */}
+            <div className="p-6 bg-white rounded-2xl border-2 border-emerald-300 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-emerald-100 text-emerald-700 rounded-xl">
+                    <QrCode className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-slate-900 font-heading text-sm">
+                      1. Celular de Campaña y Vinculación por Código QR
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Conecta la línea real de WhatsApp de la campaña sin costos de API ni servidores intermedios.
+                    </p>
+                  </div>
+                </div>
+
+                {baileysStatus && (
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                    baileysStatus.connected 
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                      : baileysStatus.status === 'qr_ready'
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                      : 'bg-slate-100 text-slate-700 border border-slate-300'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${
+                      baileysStatus.connected ? 'bg-emerald-500' : baileysStatus.status === 'qr_ready' ? 'bg-amber-500 animate-ping' : 'bg-slate-400'
+                    }`} />
+                    {baileysStatus.connected 
+                      ? 'Conectado y Operativo' 
+                      : baileysStatus.status === 'qr_ready' 
+                      ? 'Esperando Escaneo QR' 
+                      : baileysStatus.status === 'connecting'
+                      ? 'Iniciando...'
+                      : 'Desconectado'}
+                  </span>
+                )}
+              </div>
+
+              {/* Alerta de Error si ocurre */}
+              {baileysError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{baileysError}</span>
+                </div>
+              )}
+
+              {/* Estado 1: CONECTADO */}
+              {baileysStatus?.connected ? (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <span className="font-bold text-slate-900 text-sm">
+                          WhatsApp Vinculado Exitosamente
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Línea activa: <strong className="text-slate-900 font-mono text-sm">{baileysStatus.phone || 'Desconocido'}</strong> ({baileysStatus.name || 'Campaña'})
+                      </p>
+                      {baileysStatus.lastConnectedAt && (
+                        <p className="text-[11px] text-slate-500">
+                          Última conexión: {new Date(baileysStatus.lastConnectedAt).toLocaleString('es-CO')}
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleDisconnectBaileys}
+                      disabled={baileysLoading}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors flex items-center gap-1.5 self-start sm:self-center"
+                    >
+                      <Power className="w-4 h-4" />
+                      <span>Desvincular y Cerrar Sesión</span>
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-emerald-800 bg-white/80 p-2.5 rounded-lg border border-emerald-100">
+                    💡 Todas las notificaciones del cronograma (7d / 3d / 1d / salida) y la recepción comunitaria de necesidades por WhatsApp se enviarán y responderán desde este número.
+                  </div>
+                </div>
+              ) : baileysStatus?.qrCodeDataUrl ? (
+                /* Estado 2: QR LISTO PARA ESCANEAR */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-slate-50 rounded-xl border border-slate-200 items-center">
+                  <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl shadow-inner border border-slate-200">
+                    <img
+                      src={baileysStatus.qrCodeDataUrl}
+                      alt="Código QR de WhatsApp"
+                      className="w-56 h-56 object-contain rounded-lg"
+                    />
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleConnectBaileys}
+                        disabled={baileysLoading}
+                        className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${baileysLoading ? 'animate-spin' : ''}`} />
+                        <span>Regenerar Código</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h5 className="font-black text-slate-900 text-xs uppercase tracking-wider font-heading">
+                      Instrucciones para Vincular el Celular de la Campaña:
+                    </h5>
+                    <ol className="text-xs text-slate-700 space-y-2 list-decimal list-inside font-medium leading-relaxed">
+                      <li>Abre <strong>WhatsApp</strong> en el teléfono móvil destinado a la campaña.</li>
+                      <li>Toca <strong>Menú (⋮)</strong> en Android o <strong>Ajustes (⚙️)</strong> en iPhone.</li>
+                      <li>Selecciona <strong>Dispositivos vinculados</strong> y luego <strong>Vincular un dispositivo</strong>.</li>
+                      <li>Apunta la cámara del celular hacia este código QR para sincronizarlo.</li>
+                    </ol>
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-snug">
+                      ⚠️ <strong>Recomendación Operativa:</strong> Usa una línea móvil dedicada para la campaña para preservar la privacidad de los líderes y del candidato.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Estado 3: DESCONECTADO / ESPERANDO INICIO */
+                <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-3">
+                  <div className="w-12 h-12 bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center justify-center mx-auto text-slate-600">
+                    <Smartphone className="w-6 h-6 text-[#38b6ff]" />
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-slate-900 text-sm">
+                      WhatsApp no está vinculado en este momento
+                    </h5>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                      Genera un código QR para escanearlo con el teléfono de campaña. La sesión se guardará persistentemente en el servidor.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConnectBaileys}
+                    disabled={baileysLoading}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-md text-xs transition inline-flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {baileysLoading ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <QrCode className="w-4 h-4" />
+                    )}
+                    <span>{baileysLoading ? 'Generando Código QR...' : 'Generar Código QR de Vinculación'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN 2: NÚMERO PRINCIPAL Y DISPARADORES EN TIEMPO REAL */}
             <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-5">
               <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                 <div className="flex items-center gap-2">
                   <Smartphone className="w-4 h-4 text-[#38b6ff]" />
                   <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
-                    1. Destinatario Principal y Disparadores Automáticos
+                    2. Destinatario Principal y Disparadores Automáticos
                   </h4>
                 </div>
                 <span className="text-[11px] font-medium text-slate-500">
@@ -1213,274 +1137,13 @@ export const WhatsAppCenterView: React.FC<WhatsAppCenterViewProps> = ({
               )}
             </div>
 
-            {/* SECCIÓN 4: PROVEEDOR DE MENSAJERÍA Y CREDENCIALES */}
-            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-[#38b6ff]" />
-                  <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
-                    4. Proveedor de Salida de WhatsApp
-                  </h4>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-800 block mb-1.5">
-                  Proveedor de Envío Activo
-                </label>
-                <select
-                  value={settings.provider}
-                  onChange={(e) => setSettings({ ...settings, provider: e.target.value as any })}
-                  className="w-full border border-slate-300 rounded-xl p-2.5 bg-white text-slate-900 text-xs sm:text-sm font-medium focus:ring-2 focus:ring-[#38b6ff] focus:outline-none"
-                >
-                  <option value="baileys_qr">📱 WhatsApp Nativo por Código QR (Serv00 / Local - Sin API de Pago)</option>
-                  <option value="simulation">Simulador Activo de Campaña (Recomendado sin costo / Pruebas)</option>
-                  <option value="meta_cloud">Meta WhatsApp Cloud API (Oficial para Producción)</option>
-                  <option value="twilio">Twilio WhatsApp Business API (Oficial)</option>
-                  <option value="evolution_api">Evolution API (Servidor Externo Docker)</option>
-                </select>
-              </div>
-
-              {/* PANEL DE CONTROL VINCULACIÓN DIRECTA POR CÓDIGO QR (BAILEYS) */}
-              {settings.provider === 'baileys_qr' && (
-                <div className="p-5 bg-white rounded-2xl border-2 border-emerald-200 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
-                        <QrCode className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="font-black text-slate-900 font-heading text-sm">
-                          Vinculación Nativa por Código QR (Serv00 / Servidor)
-                        </h4>
-                        <p className="text-[11px] text-slate-500">
-                          Conecta la línea real de WhatsApp de la campaña sin costos de API ni servidores intermedios.
-                        </p>
-                      </div>
-                    </div>
-
-                    {baileysStatus && (
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-                        baileysStatus.connected 
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
-                          : baileysStatus.status === 'qr_ready'
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
-                          : 'bg-slate-100 text-slate-700 border border-slate-300'
-                      }`}>
-                        <span className={`w-2 h-2 rounded-full ${
-                          baileysStatus.connected ? 'bg-emerald-500' : baileysStatus.status === 'qr_ready' ? 'bg-amber-500 animate-ping' : 'bg-slate-400'
-                        }`} />
-                        {baileysStatus.connected 
-                          ? 'Conectado y Operativo' 
-                          : baileysStatus.status === 'qr_ready' 
-                          ? 'Esperando Escaneo QR' 
-                          : baileysStatus.status === 'connecting'
-                          ? 'Iniciando...'
-                          : 'Desconectado'}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Alerta de Error si ocurre */}
-                  {baileysError && (
-                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>{baileysError}</span>
-                    </div>
-                  )}
-
-                  {/* Estado 1: CONECTADO */}
-                  {baileysStatus?.connected ? (
-                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                            <span className="font-bold text-slate-900 text-sm">
-                              WhatsApp Vinculado Exitosamente
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-600">
-                            Línea activa: <strong className="text-slate-900 font-mono text-sm">{baileysStatus.phone || 'Desconocido'}</strong> ({baileysStatus.name || 'Campaña'})
-                          </p>
-                          {baileysStatus.lastConnectedAt && (
-                            <p className="text-[11px] text-slate-500">
-                              Última conexión: {new Date(baileysStatus.lastConnectedAt).toLocaleString('es-CO')}
-                            </p>
-                          )}
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={handleDisconnectBaileys}
-                          disabled={baileysLoading}
-                          className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl border border-red-200 transition-colors flex items-center gap-1.5 self-start sm:self-center"
-                        >
-                          <Power className="w-4 h-4" />
-                          <span>Desvincular y Cerrar Sesión</span>
-                        </button>
-                      </div>
-
-                      <div className="text-[11px] text-emerald-800 bg-white/80 p-2.5 rounded-lg border border-emerald-100">
-                        💡 Todas las notificaciones del cronograma (7d / 3d / 1d / salida) y la recepción comunitaria de necesidades por WhatsApp se enviarán y responderán desde este número.
-                      </div>
-                    </div>
-                  ) : baileysStatus?.qrCodeDataUrl ? (
-                    /* Estado 2: QR LISTO PARA ESCANEAR */
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-slate-50 rounded-xl border border-slate-200 items-center">
-                      <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl shadow-inner border border-slate-200">
-                        <img
-                          src={baileysStatus.qrCodeDataUrl}
-                          alt="Código QR de WhatsApp"
-                          className="w-56 h-56 object-contain rounded-lg"
-                        />
-                        <div className="mt-3 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleConnectBaileys}
-                            disabled={baileysLoading}
-                            className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 ${baileysLoading ? 'animate-spin' : ''}`} />
-                            <span>Regenerar Código</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <h5 className="font-black text-slate-900 text-xs uppercase tracking-wider font-heading">
-                          Instrucciones para Vincular el Celular de la Campaña:
-                        </h5>
-                        <ol className="text-xs text-slate-700 space-y-2 list-decimal list-inside font-medium leading-relaxed">
-                          <li>Abre <strong>WhatsApp</strong> en el teléfono móvil destinado a la campaña.</li>
-                          <li>Toca <strong>Menú (⋮)</strong> en Android o <strong>Ajustes (⚙️)</strong> en iPhone.</li>
-                          <li>Selecciona <strong>Dispositivos vinculados</strong> y luego <strong>Vincular un dispositivo</strong>.</li>
-                          <li>Apunta la cámara del celular hacia este código QR para sincronizarlo.</li>
-                        </ol>
-                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-snug">
-                          ⚠️ <strong>Recomendación Operativa:</strong> Usa una línea móvil dedicada para la campaña para preservar la privacidad de los líderes y del candidato.
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Estado 3: DESCONECTADO / ESPERANDO INICIO */
-                    <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-3">
-                      <div className="w-12 h-12 bg-white rounded-2xl shadow-sm border border-slate-200 flex items-center justify-center mx-auto text-slate-600">
-                        <Smartphone className="w-6 h-6 text-[#38b6ff]" />
-                      </div>
-                      <div>
-                        <h5 className="font-bold text-slate-900 text-sm">
-                          WhatsApp no está vinculado en este momento
-                        </h5>
-                        <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                          Genera un código QR para escanearlo con el teléfono de campaña. La sesión se guardará persistentemente en el servidor.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleConnectBaileys}
-                        disabled={baileysLoading}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl shadow-md text-xs transition inline-flex items-center gap-2 disabled:opacity-50"
-                      >
-                        {baileysLoading ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <QrCode className="w-4 h-4" />
-                        )}
-                        <span>{baileysLoading ? 'Generando Código QR...' : 'Generar Código QR de Vinculación'}</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Advertencia Crítica para Bot Conectado por QR Externo */}
-              {settings.provider === 'evolution_api' && (
-                <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-xl text-xs space-y-2 text-amber-950">
-                  <div className="flex items-center gap-2 font-bold text-amber-900">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>ADVERTENCIA CRÍTICA DE SEGURIDAD OPERATIVA (BOT QR)</span>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-amber-900">
-                    WhatsApp prohíbe el uso de bots no oficiales en números personales y puede aplicar bloqueos o suspensiones por envíos masivos.
-                  </p>
-                  <ul className="list-disc list-inside text-[11px] space-y-0.5 text-amber-950 font-medium">
-                    <li>Es <strong>OBLIGATORIO</strong> utilizar un chip / número prepago dedicado exclusivo para la campaña política.</li>
-                    <li><strong>NUNCA</strong> asocie la línea personal del candidato ni la del jefe de campaña.</li>
-                    <li>Mantenga el volumen controlado para evitar bloqueos por parte de Meta.</li>
-                  </ul>
-                </div>
-              )}
-
-              {/* Credenciales Técnicas */}
-              {settings.provider !== 'simulation' && settings.provider !== 'baileys_qr' && (
-                <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1 text-xs">
-                      API URL / Endpoint del Proveedor
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.api_url || ''}
-                      onChange={(e) => setSettings({ ...settings, api_url: e.target.value })}
-                      placeholder="https://graph.facebook.com/v19.0 o https://api.twilio.com"
-                      className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1 text-xs">
-                      API Token / Bearer Token / Secret
-                    </label>
-                    <input
-                      type="password"
-                      value={settings.api_token || ''}
-                      onChange={(e) => setSettings({ ...settings, api_token: e.target.value })}
-                      placeholder="Token secreto de autenticación"
-                      className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
-                    />
-                  </div>
-
-                  {settings.provider === 'twilio' && (
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1 text-xs">
-                        Twilio Account SID
-                      </label>
-                      <input
-                        type="text"
-                        value={settings.account_sid || ''}
-                        onChange={(e) => setSettings({ ...settings, account_sid: e.target.value })}
-                        placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                        className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
-                      />
-                    </div>
-                  )}
-
-                  {(settings.provider === 'meta_cloud' || settings.provider === 'twilio') && (
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1 text-xs">
-                        Número Remitente / Phone Number ID (E.164)
-                      </label>
-                      <input
-                        type="text"
-                        value={settings.sender_phone || ''}
-                        onChange={(e) => setSettings({ ...settings, sender_phone: e.target.value })}
-                        placeholder="+14155238886 o Phone Number ID de Meta"
-                        className="w-full border border-slate-300 rounded-lg p-2 font-mono text-xs bg-slate-50 focus:bg-white"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* SECCIÓN 5: RECORDATORIOS DE FONDO Y FRECUENCIA */}
+            {/* SECCIÓN 4: PARÁMETROS DE FONDO Y RESUMEN DIARIO */}
             <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-[#38b6ff]" />
                   <h4 className="font-black text-slate-900 font-heading text-sm uppercase tracking-wide">
-                    5. Parámetros de Fondo y Resumen Diario
+                    4. Parámetros de Fondo y Resumen Diario
                   </h4>
                 </div>
               </div>
