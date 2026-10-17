@@ -51,6 +51,61 @@ if (!JWT_SECRET) {
     : crypto.randomBytes(32).toString('hex');
 }
 
+// ==========================================
+// MODO FUERA DE LÍNEA / FUERA DE SERVICIO (LOCKDOWN)
+// ==========================================
+app.use((req, res) => {
+  res.status(503).type('html').send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sitio Fuera de Línea</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background-color: #0b1120;
+      color: #94a3b8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+    }
+    .card {
+      max-width: 440px;
+      margin: 20px;
+      padding: 36px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    h1 {
+      color: #f1f5f9;
+      font-size: 1.35rem;
+      margin: 0 0 10px 0;
+      font-weight: 700;
+    }
+    p {
+      color: #64748b;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Plataforma Fuera de Línea</h1>
+    <p>El acceso a este sistema se encuentra deshabilitado.</p>
+  </div>
+</body>
+</html>`);
+});
+
 
 // In-memory rate limiting map for login attempts (5 failed attempts per 15 minutes per IP/email)
 const loginAttemptsMap = new Map();
